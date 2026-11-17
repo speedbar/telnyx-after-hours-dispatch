@@ -8,3 +8,4 @@ Date-stamped: what worked, what did not, workaround.
 - 17 Nov 2026: the default actor scaffold fails to ship until the SDK example values are scrubbed (BUG-001).
 - Per the models page: Kimi-K3 is not available for assistants; it works as the OpenCode coding model.
 - 17 Nov 2026: `telnyx-edge storage kv create` reported a client-side timeout, but the namespace was created (see V-003). The CLI gives no hint that the request may have succeeded; run `telnyx-edge storage kv list` before retrying.
+- 17 Nov 2026: the KV key character rule (a-z A-Z 0-9 - _ / = . only) is not stated where we looked (storage KV doc); we found it from an HTTP 400 on a deployed function. A one-line rule in the KV doc would have saved a design change.

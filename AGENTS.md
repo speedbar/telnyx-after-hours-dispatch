@@ -49,3 +49,6 @@ root              telnyx.toml package.json tsconfig.json .env.example
 - Two simultaneous callers never get the same technician (proved by the concurrency script, no phone needed).
 - With the MCP server stopped, the call ends gracefully and the failure shows in logs or metrics within a minute.
 - README, architecture diagram, demo script, decisions, bug journal and the OpenCode config are in the repo.
+
+## Platform facts learned the hard way
+- KV keys may contain only a-z A-Z 0-9 - _ / = . (no colon, no plus, no space). Use "/" as the separator. Build every key through one helper in src/lib/ that validates against /^[A-Za-z0-9\-_\/=.]+$/.
