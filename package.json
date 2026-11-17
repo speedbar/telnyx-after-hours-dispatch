@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
     "postinstall": "node scripts/scrub-sdk-examples.mjs",
     "scrub": "node scripts/scrub-sdk-examples.mjs",
     "check:scrub": "node scripts/scrub-sdk-examples.mjs --check"
