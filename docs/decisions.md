@@ -1,3 +1,49 @@
 # Decisions
 One entry per decision: Decision / Options considered / Choice / Why / Revisit if.
-(Populated in S0.4 from 09-build-ready-architecture section 4.2.)
+Source: claude planning doc 09 section 4.2, plus decisions made while building. Where this file and an older planning note disagree, this file wins.
+
+## D1 One umbrella function
+- Options: separate functions per concern (dv, mcp, events) vs one umbrella function `dispatch`.
+- Choice: one umbrella function, TypeScript, one telnyx.toml.
+- Why: Stateful Actors require the umbrella project; one deploy, one URL, one log stream.
+- Revisit if: bundle size or cold start becomes a problem (bundle is about 2.6 MB today).
+
+## D2 Hand-rolled stateless MCP server
+- Options: @modelcontextprotocol/sdk vs a small JSON-RPC 2.0 handler over POST.
+- Choice: hand-rolled, plain JSON responses, no SSE, no sessions.
+- Why: fewer dependencies in the bundle; tool-call servers over HTTP may answer plain JSON.
+- Revisit if: the assistant cannot connect to it (fallback: the SDK).
+
+## D3 Actor holds reservation truth; KV holds the rest
+- Choice: TechnicianActor owns availability and holds. KV holds read-mostly or recoverable data (jobs, flags, customers, idempotency). Actors do not touch KV.
+- Why: KV has no compare-and-set (last write wins), so a read-modify-write that must be exclusive belongs in an actor.
+
+## D4 Reservation is a hold with a TTL
+- Choice: default 90 s, set by DISPATCH_HOLD_TTL_S. An actor alarm expires it; every method also checks expiry lazily.
+- Why: any failure path returns the technician to available. The alarm is at-least-once and can be dropped after 3 failures, so the lazy check is the safety net.
+
+## D5 Idempotency on call_ref
+- Choice: every tool takes call_ref (the Telnyx call id; sim-<uuid> from the simulator). A repeated reserve_technician with the same call_ref returns the existing hold.
+
+## D6 Accepted and declined outcomes
+- Choice: decline is handled in the call (release). Accept is reconciled by the post-call webhook; otherwise TTL expiry marks the job expired_unconfirmed. Never silently "dispatched".
+
+## D7 Models
+- Assistant model: zai-org/GLM-5.3-Flash first; switch to moonshotai/Kimi-K2.6 if tool calling is unreliable.
+- Coding model (OpenCode): moonshotai/Kimi-K3 (GLM-5.2 if K3 is too slow). Kimi-K3 is not available for assistants.
+
+## D8 Feature flags in KV
+- Choice: flag/dispatch_enabled and flag/technician_pool are read by /dv and passed as dynamic variables, so edges can route on them without a redeploy.
+
+## D9 No customer PII in logs
+- Choice: caller_hash = sha256(salt + e164) first 12 hex characters; LOG_SALT is a secret.
+
+## D10 KV key format (added 17 Nov 2026, BUG-002)
+- Options: keep ":" separators (rejected by the service) vs "/" separators.
+- Choice: only a-z A-Z 0-9 - _ / = . are allowed. Use "/" as the separator, drop "+" from phone numbers, and replace any other character in call ids with "_". Build every key through one helper in src/lib/ that validates the format.
+- Keys: flag/dispatch_enabled, flag/technician_pool, cust/<e164 without +>, job/<job_id>, job-by-call/<sanitised call_ref>.
+- Why: found by a live test route (HTTP 400, code 10015). Actor names are not affected.
+
+## D11 Git workflow (added 17 Nov 2026)
+- Choice: one short branch per OpenCode task, named after its spec; merge to main with --no-ff only after the task tests pass and a live curl works; docs-only commits go straight to main. Deploy from a branch to test; before stopping for the night, merge or redeploy from main so the live function matches main.
+- Why: main stays the last known-good version and rollback is one ship away.

@@ -52,3 +52,6 @@ root              telnyx.toml package.json tsconfig.json .env.example
 
 ## Platform facts learned the hard way
 - KV keys may contain only a-z A-Z 0-9 - _ / = . (no colon, no plus, no space). Use "/" as the separator. Build every key through one helper in src/lib/ that validates against /^[A-Za-z0-9\-_\/=.]+$/.
+
+## Git workflow
+- Never run git commit, git push, git switch or git merge. The human does all git writes (see Working agreement). Work on whatever branch is checked out.

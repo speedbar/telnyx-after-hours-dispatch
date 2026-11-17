@@ -19,5 +19,6 @@ Evidence: curl output from the deployed function. The error comes from the KV se
 Hypotheses ruled out: namespace or binding problem (the 400 names the key, and the binding resolved); expirationTtl option (the message is about the key).
 Root cause: the KV service allows only a-z A-Z 0-9 - _ / = . in keys. Our design (doc 09 section 5.4) used ":" separators (flag:, cust:, job:, job-by-call:) and "+" in E.164 phone numbers, and call ids from Telnyx contain ":" ("v3:..."). The facts table (V23) did not list a key character rule, so nothing flagged it. Actor names do allow ":" (V24); only KV is strict.
 Fix: use "/" as the separator in every KV key (flag/dispatch_enabled, cust/<e164 without +>, job/<job_id>, job-by-call/<call_ref sanitised>), and build all keys through one helper that validates them. Test route key becomes "kvtest/ping" (task S0.3b).
+Status: FIXED and verified 17 Nov 2026, 11:52 pm Sydney (V-005): /kv-test with key "kvtest/ping" returned ok:true.
 Signal that found it: a deployed test route that does a real write and read-back (a local type check cannot catch this, and `telnyx-edge dev` might not enforce it).
 What we would add to catch it faster: a key-format row in the verified-facts table; a unit test that every key builder output matches /^[A-Za-z0-9\-_\/=.]+$/.
