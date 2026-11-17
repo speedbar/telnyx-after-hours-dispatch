@@ -7,3 +7,4 @@ Date-stamped: what worked, what did not, workaround.
 - 17 Nov 2026: `telnyx-edge new-func --actor --name=dispatch` prints a function ID immediately and writes it to telnyx.toml under [edge_compute] (func_id, func_name).
 - 17 Nov 2026: the default actor scaffold fails to ship until the SDK example values are scrubbed (BUG-001).
 - Per the models page: Kimi-K3 is not available for assistants; it works as the OpenCode coding model.
+- 17 Nov 2026: `telnyx-edge storage kv create` reported a client-side timeout, but the namespace was created (see V-003). The CLI gives no hint that the request may have succeeded; run `telnyx-edge storage kv list` before retrying.
