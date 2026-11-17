@@ -9,3 +9,4 @@ Date-stamped: what worked, what did not, workaround.
 - Per the models page: Kimi-K3 is not available for assistants; it works as the OpenCode coding model.
 - 17 Nov 2026: `telnyx-edge storage kv create` reported a client-side timeout, but the namespace was created (see V-003). The CLI gives no hint that the request may have succeeded; run `telnyx-edge storage kv list` before retrying.
 - 17 Nov 2026: the KV key character rule (a-z A-Z 0-9 - _ / = . only) is not stated where we looked (storage KV doc); we found it from an HTTP 400 on a deployed function. A one-line rule in the KV doc would have saved a design change.
+- 17 Nov 2026: `telnyx-edge deployments`, `rollback`, `revisions`, `inspect` and `log-export` exist in v0.5.18 but our docs notes did not mention them. Worth trying `telnyx-edge deployments dispatch` the next time a ship fails.

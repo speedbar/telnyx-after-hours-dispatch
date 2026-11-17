@@ -47,3 +47,11 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 ## D11 Git workflow (added 17 Nov 2026)
 - Choice: one short branch per OpenCode task, named after its spec; merge to main with --no-ff only after the task tests pass and a live curl works; docs-only commits go straight to main. Deploy from a branch to test; before stopping for the night, merge or redeploy from main so the live function matches main.
 - Why: main stays the last known-good version and rollback is one ship away.
+
+## D12 Architecture: managed AI Assistant with a Conversation Workflow (added 18 Nov 2026)
+- Options considered: (A) Telnyx AI Assistant with a Conversation Workflow, MCP tools, dynamic-variables webhook and built-in warm transfer; (B) build the voice loop ourselves (Voice API / Call Control or a LiveKit agent using Telnyx STT, LLM and TTS); (C) an LLM plus a vector store (Telnyx embeddings / Knowledge Base / AI Search) as the core design.
+- Choice: A. The brief requires the workflow, MCP and dynamic-variables pieces; the Telnyx docs say workflows suit structured processes such as intake, escalation and triage while a single prompt suits open-ended conversations; warm transfer with acceptance is an assistant feature; Telnyx's own home-services receptionist page describes the same pattern (triage, book, escalate true emergencies, transfer to a staff mobile).
+- Why not B: we would rebuild turn detection, barge-in, idle handling and the transfer handshake, and lose the workflow and warm-transfer features the brief scores.
+- Why not C as the core: dispatch is transactional and state-based (reserve a technician, hand off the call). Exact lookups (customer, flags, job) belong in KV and the actor, not in similarity search. A vector store answers "what do our documents say", which is not this problem.
+- Where a vector store could fit: an optional FAQ knowledge base on the assistant (service area, after-hours rates, what to do while waiting). Not in the build plan; a Day 3 stretch only if everything else passes. Known unknowns: the workflows doc does not cover knowledge or retrieval scoping per node, and retrieval latency on a voice turn is unmeasured.
+- Revisit if: the Portal workflow editor cannot express the flow, or Stephen asks for a knowledge-base example.

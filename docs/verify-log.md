@@ -16,4 +16,15 @@ Date: 17 Nov 2026, about 11:40 pm Sydney. Test: `telnyx-edge ship` of `dispatch`
 ### V-005 KV put/get with a valid key, TTL option accepted
 Date: 17 Nov 2026, 11:52 pm Sydney. Test: `telnyx-edge ship` of `dispatch` after the S0.3b fix (56s), then `curl -X POST .../kv-test`. Result: {"ok":true,"key":"kvtest/ping","value":"2026-11-17T12:52:03.131Z","ttl_s":30}. Write and read-back work from the Edge function, and put with expirationTtl was accepted. Expiry itself (value gone after 30 s) is NOT yet observed. Status: OBSERVED (read/write); TTL expiry still to TEST with a read-only route.
 
-Pending S0.1 evidence: output of `opencode auth list`, `telnyx-edge --help`, `telnyx-edge metrics --help`.
+### V-006 S0.1 evidence: OpenCode auth and Edge CLI surface (T/V17)
+Date: 17 Nov 2026, 11:59 pm Sydney. Commands run on the Mac.
+- `opencode auth list`: one credential, "telnyx api" (stored in OpenCode's own auth.json, not in the repo).
+- `telnyx-edge --help` (v0.5.18) lists: actors, auth, bindings, config, delete-func, deployments (deploy history, including why deploys failed), dev, domains, help, inspect, list, log-export, logs, metrics, network, new-func, reset-func, revisions, rollback, secrets, ship, status, storage, tunnel, types, update. So logs, metrics, actors, storage are all present, and there are rollback, revisions, deployments and log-export commands we had not planned around.
+- `telnyx-edge metrics --help`: `telnyx-edge metrics <function> [--errors] [--since 1h|24h|168h (max 168h, default 24h)] [--json]`. Summarises requests, HTTP error counts, latency, CPU, memory. `--errors` shows the HTTP 5xx count only; detailed exception classes and messages are not returned by this endpoint yet. `<function>` accepts a name or id.
+Result: V17 `--errors` is CONFIRMED (it exists in v0.5.18). Status: OBSERVED.
+
+### V-007 Do OpenCode inference tokens draw down the trial credit?
+Date: 17 Nov 2026, 11:59 pm Sydney. Portal available balance: $4.89. Inference dashboard reported cost for the same period (52 requests, 1.13M tokens, all Kimi-K3 via OpenCode): $0.11. $5.00 minus $0.11 is $4.89. Result: the drop matches the reported inference cost to the cent, and nothing extra was taken for two Edge ships, KV and actor calls. Caveat: the starting balance of exactly $5.00 was not recorded before the first task, so this is an inference (strong). Status: OBSERVED, starting balance assumed. Implication: voice minutes (about $0.05/min plus LLM tokens) will use the rest, and a Paid top-up is needed for the two-phone transfer test anyway.
+
+### V-008 Can this account create an assistant, and which types?
+Date: 17 Nov 2026, 11:59 pm Sydney. Portal sidebar badge says "Trial". Create assistant opens "Choose an AI Assistant type" with two options: Single-prompt (Classic) and Conversation Workflow (Workflow). Result: assistant creation is available at Trial and the workflow type is offered (T3/S2.1 gate passed; per-node MCP tool scoping still untested). Status: OBSERVED.
