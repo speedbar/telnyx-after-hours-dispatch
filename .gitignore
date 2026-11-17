@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.telnyx/
+.telnyx-test-key
+dist/
+*.tsbuildinfo
+.DS_Store
