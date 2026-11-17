@@ -19,7 +19,7 @@ export default {
       }
       if (url.pathname === "/kv-test") {
         try {
-          const key = "kvtest:ping";
+          const key = "kvtest/ping";
           await env.DISPATCH_KV.put(key, new Date().toISOString(), {
             expirationTtl: 30,
           });
