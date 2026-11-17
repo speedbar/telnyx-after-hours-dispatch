@@ -66,3 +66,4 @@ root              telnyx.toml package.json tsconfig.json .env.example
 - Do not refactor, rename or "improve" anything outside the task.
 - Comments: one short line per function at most. Prefer targeted edits over rewriting a whole file. Keep tests compact: one assertion group per case, no long fixture comments.
 - If the spec contradicts itself or a "do not edit" rule, pick the simplest reading, note the choice in one line in your final summary, and move on. Do not deliberate at length.
+- Act after reading: make your first edit within about five steps of starting. Do not write code, full plans or long deliberation in your reasoning; decide briefly and edit. (A long planning step once ended a run with no output; BUG-004.)
