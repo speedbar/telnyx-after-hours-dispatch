@@ -64,3 +64,5 @@ root              telnyx.toml package.json tsconfig.json .env.example
 - Run the tests once at the end, not after every small edit. Show only the summary lines (pass/fail counts and any failure), not full output.
 - Keep replies short. No restating the spec, no long explanations of what you did; list the files changed and the check results, then stop.
 - Do not refactor, rename or "improve" anything outside the task.
+- Comments: one short line per function at most. Prefer targeted edits over rewriting a whole file. Keep tests compact: one assertion group per case, no long fixture comments.
+- If the spec contradicts itself or a "do not edit" rule, pick the simplest reading, note the choice in one line in your final summary, and move on. Do not deliberate at length.

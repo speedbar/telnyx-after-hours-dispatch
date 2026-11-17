@@ -32,4 +32,4 @@ Root cause: KV operations from the edge function cost about 1.5 to 1.9 s each. W
 Fix: planned in task S1.2b. Keep KV off the voice hot path. Hot state (customer lookup, flags, later reservations) lives in Stateful Actor storage, which is about 15 times faster. KV stays the system of record, written off the hot path.
 Signal that found it: the dv_out latency_ms field, a curl time_total comparison across /health, /actor-test and /kv-test, and the dv_degraded log line.
 What we would add to catch it faster: a latency budget per route in the spec, and a timed live call on every task that touches storage.
-Status: OPEN (workaround designed, not built).
+Status: FIXED (by avoiding KV on the hot path) and verified live 18 Nov 2026, 1:58 am Sydney (V-011): /dv now takes 14 to 31 ms server-side (curl 0.22 to 0.35 s from Sydney including TLS), down from about 3.0 to 3.6 s. The slowness of KV itself is NOT fixed and its cause is still unknown.
