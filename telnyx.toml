@@ -6,6 +6,9 @@ compatibility_date = "2026-05-01"
 binding = "TECH"
 type = "TechnicianActor"
 
+[storage.kv.DISPATCH_KV]
+id = "ce309914-f9dc-49c6-9429-632418ecec27"
+
 [edge_compute]
 func_id = "b823b5bf-9d25-4174-ad33-e99f506a4200"
 func_name = "dispatch"
