@@ -1,0 +1,11 @@
+name = "dispatch"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[actors]]
+binding = "TECH"
+type = "TechnicianActor"
+
+[edge_compute]
+func_id = "b823b5bf-9d25-4174-ad33-e99f506a4200"
+func_name = "dispatch"
