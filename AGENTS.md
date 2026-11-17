@@ -52,6 +52,15 @@ root              telnyx.toml package.json tsconfig.json .env.example
 
 ## Platform facts learned the hard way
 - KV keys may contain only a-z A-Z 0-9 - _ / = . (no colon, no plus, no space). Use "/" as the separator. Build every key through one helper in src/lib/ that validates against /^[A-Za-z0-9\-_\/=.]+$/.
+- KV is slow from the edge function: about 1.5 to 1.9 s per operation (BUG-003). Actor storage is under 0.1 s. Never read or write KV on a voice turn, inside /dv or inside an MCP tool call. Hot state goes through actors; KV is written off the hot path. Every tool and route must answer in under 500 ms (the /dv webhook in under 300 ms).
 
 ## Git workflow
 - Never run git commit, git push, git switch or git merge. The human does all git writes (see Working agreement). Work on whatever branch is checked out.
+
+## Saving tokens (standing rules)
+- If the same check (tsc, a test, the scrub) fails twice with the same error, STOP and report the error and what you tried. Do not try a third approach.
+- Do not reread files you already read in this session. Read only the files the task spec lists, plus the file you are editing.
+- Do not explore the repo, run package installs, or add dependencies unless the spec says so.
+- Run the tests once at the end, not after every small edit. Show only the summary lines (pass/fail counts and any failure), not full output.
+- Keep replies short. No restating the spec, no long explanations of what you did; list the files changed and the check results, then stop.
+- Do not refactor, rename or "improve" anything outside the task.

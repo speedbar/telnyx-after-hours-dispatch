@@ -1,0 +1,37 @@
+// src/actors/DirectoryActor.ts
+// Hot-path read model for /dv (D13, BUG-003): actor storage is ~0.1 s per op,
+// KV is ~1.5-1.9 s — over the 1.5 s dynamic-variables timeout. The actor holds
+// the same keys KV holds (built with the shared helpers so the names match),
+// seeded via seed() from the /admin/seed route. KV stays the durable copy,
+// written off the hot path. Keep both methods tiny: no caching, no TTL.
+
+import { StatefulActor } from "@telnyx/edge-runtime";
+import { assertValidKey, keys } from "../lib/kv-keys";
+
+export class DirectoryActor extends StatefulActor {
+  // One call for the /dv hot path: the feature flag and the customer record,
+  // as raw strings (no parsing). phoneDigits is the E.164 number without the
+  // "+" (keys.customer strips the plus, so the key matches the KV name).
+  async lookup(
+    phoneDigits: string,
+    flagName: string,
+  ): Promise<{ flag: string | null; customer: string | null }> {
+    const [flag, customer] = await Promise.all([
+      this.ctx.storage.get<string>(keys.flag(flagName)),
+      this.ctx.storage.get<string>(keys.customer("+" + phoneDigits)),
+    ]);
+    return { flag: flag ?? null, customer: customer ?? null };
+  }
+
+  // Off-hot-path write used by /admin/seed. Every key is validated BEFORE any
+  // write, so a bad key aborts the whole batch and nothing partial is stored.
+  async seed(entries: Array<{ key: string; value: string }>): Promise<number> {
+    for (const entry of entries) {
+      assertValidKey(entry.key);
+    }
+    for (const entry of entries) {
+      await this.ctx.storage.put(entry.key, entry.value);
+    }
+    return entries.length;
+  }
+}

@@ -1,10 +1,12 @@
 import { readConfig } from "./lib/config";
 import { handleDv } from "./routes/dv";
+import { handleSeed } from "./routes/seed";
 
-// Re-export the actor class from the entry point so it is bundled and shipped
-// with the function (the runtime resolves the [[actors]] type here; the
-// exported class name must equal the type).
+// Re-export the actor classes from the entry point so they are bundled and
+// shipped with the function (the runtime resolves each [[actors]] type here;
+// the exported class name must equal the type).
 export { TechnicianActor } from "./actors/TechnicianActor";
+export { DirectoryActor } from "./actors/DirectoryActor";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -24,6 +26,10 @@ export default {
       // signature, so it is not assignable to DvEnv as-is, and casting would
       // hide that. The spread keeps the real bindings/secrets by reference.
       return await handleDv(req, { ...env });
+    }
+    if (url.pathname === "/admin/seed") {
+      // Same spread pattern as /dv. Token check happens inside handleSeed.
+      return await handleSeed(req, { ...env });
     }
     // TEMPORARY, unauthenticated test routes from S0.3; remove or protect before the demo.
     if (url.pathname === "/kv-test" || url.pathname === "/actor-test") {

@@ -1,15 +1,19 @@
 // tests/dv.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { handleDv, type DvEnv } from "../src/routes/dv.js";
+import {
+  handleDv,
+  type DirectoryStub,
+  type DvEnv,
+  type LookupResult,
+} from "../src/routes/dv.js";
 
 // Fixed "now" for determinism (an integer number of seconds).
 const NOW_MS = 1_800_000_000_000;
 const NOW_S = NOW_MS / 1000;
 
 const PHONE = "+61491570006";
-const CUSTOMER_KEY = "cust/61491570006";
-const FLAG_KEY = "flag/dispatch_enabled";
+const PHONE_DIGITS = "61491570006";
 const CALL_REF = "v3:sim-test-001";
 const SALT = "dv-test-salt";
 
@@ -62,22 +66,39 @@ function makeBody(): string {
   });
 }
 
-function mapKv(entries: Record<string, string> = {}): DvEnv["DISPATCH_KV"] {
-  const map = new Map(Object.entries(entries));
+interface LookupCall {
+  phoneDigits: string;
+  flagName: string;
+}
+
+// DIRECTORY fake: records calls and returns a fixed result. fn overrides the
+// result entirely (e.g. a rejection or a promise that never resolves).
+function fakeDirectory(
+  result: LookupResult,
+  calls: LookupCall[] = [],
+  fn?: DirectoryStub["lookup"],
+): DvEnv["DIRECTORY"] {
   return {
-    get(key: string): Promise<string | null> {
-      return Promise.resolve(map.has(key) ? (map.get(key) as string) : null);
+    idFromName(_name: string): DirectoryStub {
+      return {
+        lookup:
+          fn ??
+          ((phoneDigits: string, flagName: string) => {
+            calls.push({ phoneDigits, flagName });
+            return Promise.resolve(result);
+          }),
+      };
     },
   };
 }
 
 function makeEnv(
   publicKeyB64: string,
-  kv: DvEnv["DISPATCH_KV"],
+  directory: DvEnv["DIRECTORY"],
   extras: Record<string, unknown> = {},
 ): DvEnv {
   return {
-    DISPATCH_KV: kv,
+    DIRECTORY: directory,
     TELNYX_PUBLIC_KEY: publicKeyB64,
     LOG_SALT: SALT,
     ...extras,
@@ -122,11 +143,12 @@ async function variablesOf(res: Response): Promise<Record<string, string>> {
 
 test("1. known caller: 200, dynamic_variables only, string values, customer fields", async () => {
   const { privateKey, publicKeyB64 } = await fixture;
-  const kv = mapKv({
-    [FLAG_KEY]: "true",
-    [CUSTOMER_KEY]: JSON.stringify(CUSTOMER),
-  });
-  const env = makeEnv(publicKeyB64, kv);
+  const calls: LookupCall[] = [];
+  const directory = fakeDirectory(
+    { flag: "true", customer: JSON.stringify(CUSTOMER) },
+    calls,
+  );
+  const env = makeEnv(publicKeyB64, directory);
   const body = makeBody();
   const ts = String(NOW_S);
   const sig = await sign(privateKey, ts, body);
@@ -144,6 +166,16 @@ test("1. known caller: 200, dynamic_variables only, string values, customer fiel
     assert.equal(vars.customer_address, CUSTOMER.address);
     assert.equal(vars.call_ref, CALL_REF);
     assert.equal(vars.dispatch_enabled, "true");
+    // The flag and the customer come from exactly one actor lookup.
+    assert.deepEqual(calls, [
+      { phoneDigits: PHONE_DIGITS, flagName: "dispatch_enabled" },
+    ]);
+    // A dv_lookup log line records the timed tool call.
+    const dvLookup = parsed(cap.lines).find((l) => l.event === "dv_lookup");
+    assert.ok(dvLookup, "expected a dv_lookup log line");
+    assert.equal(dvLookup.tool, "actor.lookup");
+    assert.equal(dvLookup.outcome, "ok");
+    assert.equal(typeof dvLookup.latency_ms, "number");
   } finally {
     cap.restore();
   }
@@ -151,7 +183,10 @@ test("1. known caller: 200, dynamic_variables only, string values, customer fiel
 
 test("2. unknown caller: caller_known false, empty customer fields", async () => {
   const { privateKey, publicKeyB64 } = await fixture;
-  const env = makeEnv(publicKeyB64, mapKv({ [FLAG_KEY]: "true" }));
+  const env = makeEnv(
+    publicKeyB64,
+    fakeDirectory({ flag: "true", customer: null }),
+  );
   const body = makeBody();
   const ts = String(NOW_S);
   const sig = await sign(privateKey, ts, body);
@@ -170,7 +205,7 @@ test("2. unknown caller: caller_known false, empty customer fields", async () =>
 
 test("3. no signature headers: 403 forbidden body and a sig_fail log line", async () => {
   const { publicKeyB64 } = await fixture;
-  const env = makeEnv(publicKeyB64, mapKv());
+  const env = makeEnv(publicKeyB64, fakeDirectory({ flag: null, customer: null }));
   const cap = captureLog();
   try {
     const req = new Request("https://test.invalid/dv", {
@@ -191,7 +226,7 @@ test("3. no signature headers: 403 forbidden body and a sig_fail log line", asyn
 
 test("4. tampered body -> 403; stale timestamp (10 min old) -> 403", async () => {
   const { privateKey, publicKeyB64 } = await fixture;
-  const env = makeEnv(publicKeyB64, mapKv());
+  const env = makeEnv(publicKeyB64, fakeDirectory({ flag: null, customer: null }));
   const body = makeBody();
   const ts = String(NOW_S);
   const cap = captureLog();
@@ -232,11 +267,17 @@ test("5. dispatch flag: stored 'false' -> 'false'; missing -> 'true'", async () 
   const sig = await sign(privateKey, ts, body);
   const cap = captureLog();
   try {
-    const offEnv = makeEnv(publicKeyB64, mapKv({ [FLAG_KEY]: "false" }));
+    const offEnv = makeEnv(
+      publicKeyB64,
+      fakeDirectory({ flag: "false", customer: null }),
+    );
     const resOff = await handleDv(signedRequest(body, sig, ts), offEnv, NOW_MS);
     assert.equal((await variablesOf(resOff)).dispatch_enabled, "false");
 
-    const missingEnv = makeEnv(publicKeyB64, mapKv());
+    const missingEnv = makeEnv(
+      publicKeyB64,
+      fakeDirectory({ flag: null, customer: null }),
+    );
     const resMissing = await handleDv(
       signedRequest(body, sig, ts),
       missingEnv,
@@ -248,14 +289,14 @@ test("5. dispatch flag: stored 'false' -> 'false'; missing -> 'true'", async () 
   }
 });
 
-test("6. KV get throws: 200 with safe defaults and a dv_degraded log line", async () => {
+test("6. actor lookup throws: 200 with safe defaults and a dv_degraded log line", async () => {
   const { privateKey, publicKeyB64 } = await fixture;
-  const kv: DvEnv["DISPATCH_KV"] = {
-    get(): Promise<string | null> {
-      return Promise.reject(new Error("kv unavailable"));
-    },
-  };
-  const env = makeEnv(publicKeyB64, kv);
+  const directory = fakeDirectory(
+    { flag: null, customer: null },
+    [],
+    () => Promise.reject(new Error("actor unavailable")),
+  );
+  const env = makeEnv(publicKeyB64, directory);
   const body = makeBody();
   const ts = String(NOW_S);
   const sig = await sign(privateKey, ts, body);
@@ -269,9 +310,14 @@ test("6. KV get throws: 200 with safe defaults and a dv_degraded log line", asyn
     assert.equal(vars.customer_name, "");
     assert.equal(vars.call_ref, CALL_REF);
     const events = parsed(cap.lines);
-    assert.ok(events.some((l) => l.event === "dv_degraded"));
+    const degraded = events.find((l) => l.event === "dv_degraded");
+    assert.ok(degraded, "expected a dv_degraded log line");
+    assert.equal(degraded.error, "lookup_failed:Error");
     const dvOut = events.find((l) => l.event === "dv_out");
     assert.equal(dvOut?.outcome, "degraded");
+    const dvLookup = events.find((l) => l.event === "dv_lookup");
+    assert.ok(dvLookup, "expected a dv_lookup log line");
+    assert.equal(dvLookup.outcome, "fail");
   } finally {
     cap.restore();
   }
@@ -279,7 +325,7 @@ test("6. KV get throws: 200 with safe defaults and a dv_degraded log line", asyn
 
 test("7. GET request: 405 method_not_allowed", async () => {
   const { publicKeyB64 } = await fixture;
-  const env = makeEnv(publicKeyB64, mapKv());
+  const env = makeEnv(publicKeyB64, fakeDirectory({ flag: null, customer: null }));
   const cap = captureLog();
   try {
     const req = new Request("https://test.invalid/dv", { method: "GET" });
@@ -303,7 +349,10 @@ test("8. TELNYX_PUBLIC_KEY missing: 403, sig_fail log with error no_public_key",
   delete process.env.TELNYX_PUBLIC_KEY;
   const cap = captureLog();
   try {
-    const env: DvEnv = { DISPATCH_KV: mapKv(), LOG_SALT: SALT };
+    const env: DvEnv = {
+      DIRECTORY: fakeDirectory({ flag: null, customer: null }),
+      LOG_SALT: SALT,
+    };
     const req = new Request("https://test.invalid/dv", {
       method: "POST",
       body: makeBody(),
@@ -325,7 +374,7 @@ test("8. TELNYX_PUBLIC_KEY missing: 403, sig_fail log with error no_public_key",
 
 test("9. valid signature but body is not JSON: 200 safe defaults + dv_degraded", async () => {
   const { privateKey, publicKeyB64 } = await fixture;
-  const env = makeEnv(publicKeyB64, mapKv());
+  const env = makeEnv(publicKeyB64, fakeDirectory({ flag: null, customer: null }));
   const body = "this is not json";
   const ts = String(NOW_S);
   const sig = await sign(privateKey, ts, body);
@@ -345,9 +394,9 @@ test("9. valid signature but body is not JSON: 200 safe defaults + dv_degraded",
 
 test("10. privacy: salted hash logged, never the phone digits; no salt -> null hash", async () => {
   const { privateKey, publicKeyB64 } = await fixture;
-  const kv = mapKv({
-    [FLAG_KEY]: "true",
-    [CUSTOMER_KEY]: JSON.stringify(CUSTOMER),
+  const directory = fakeDirectory({
+    flag: "true",
+    customer: JSON.stringify(CUSTOMER),
   });
   const body = makeBody();
   const ts = String(NOW_S);
@@ -357,7 +406,7 @@ test("10. privacy: salted hash logged, never the phone digits; no salt -> null h
     // With LOG_SALT set.
     const salted = await handleDv(
       signedRequest(body, sig, ts),
-      makeEnv(publicKeyB64, kv),
+      makeEnv(publicKeyB64, directory),
       NOW_MS,
     );
     assert.equal(salted.status, 200);
@@ -378,7 +427,7 @@ test("10. privacy: salted hash logged, never the phone digits; no salt -> null h
       cap.lines.length = 0;
       const unsalted = await handleDv(
         signedRequest(body, sig, ts),
-        makeEnv(publicKeyB64, kv, { LOG_SALT: undefined }),
+        makeEnv(publicKeyB64, directory, { LOG_SALT: undefined }),
         NOW_MS,
       );
       assert.equal(unsalted.status, 200);
@@ -397,6 +446,7 @@ test("10. privacy: salted hash logged, never the phone digits; no salt -> null h
 
 test("11. hold_ttl_s comes from DISPATCH_HOLD_TTL_S and defaults to '90'", async () => {
   const { privateKey, publicKeyB64 } = await fixture;
+  const directory = fakeDirectory({ flag: null, customer: null });
   const body = makeBody();
   const ts = String(NOW_S);
   const sig = await sign(privateKey, ts, body);
@@ -404,17 +454,55 @@ test("11. hold_ttl_s comes from DISPATCH_HOLD_TTL_S and defaults to '90'", async
   try {
     const custom = await handleDv(
       signedRequest(body, sig, ts),
-      makeEnv(publicKeyB64, mapKv(), { DISPATCH_HOLD_TTL_S: "45" }),
+      makeEnv(publicKeyB64, directory, { DISPATCH_HOLD_TTL_S: "45" }),
       NOW_MS,
     );
     assert.equal((await variablesOf(custom)).hold_ttl_s, "45");
 
     const fallback = await handleDv(
       signedRequest(body, sig, ts),
-      makeEnv(publicKeyB64, mapKv()),
+      makeEnv(publicKeyB64, directory),
       NOW_MS,
     );
     assert.equal((await variablesOf(fallback)).hold_ttl_s, "90");
+  } finally {
+    cap.restore();
+  }
+});
+
+test("12. lookup that never resolves: 200 safe defaults, lookup_timeout, within ~1.2 s", async () => {
+  const { privateKey, publicKeyB64 } = await fixture;
+  const directory = fakeDirectory(
+    { flag: null, customer: null },
+    [],
+    () => new Promise<LookupResult>(() => {}), // never resolves
+  );
+  const env = makeEnv(publicKeyB64, directory);
+  const body = makeBody();
+  const ts = String(NOW_S);
+  const sig = await sign(privateKey, ts, body);
+  const cap = captureLog();
+  try {
+    const started = Date.now();
+    // Injected short timeout (50 ms) instead of the real 1000 ms.
+    const res = await handleDv(signedRequest(body, sig, ts), env, NOW_MS, 50);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1200, `degraded answer took ${elapsed} ms`);
+    assert.equal(res.status, 200);
+    const vars = await variablesOf(res);
+    assert.equal(vars.dispatch_enabled, "true");
+    assert.equal(vars.caller_known, "false");
+    assert.equal(vars.call_ref, CALL_REF);
+    const events = parsed(cap.lines);
+    const degraded = events.find((l) => l.event === "dv_degraded");
+    assert.ok(degraded, "expected a dv_degraded log line");
+    assert.equal(degraded.error, "lookup_timeout");
+    assert.equal(degraded.outcome, "degraded");
+    const dvLookup = events.find((l) => l.event === "dv_lookup");
+    assert.ok(dvLookup, "expected a dv_lookup log line");
+    assert.equal(dvLookup.tool, "actor.lookup");
+    assert.equal(dvLookup.outcome, "fail");
+    assert.equal(dvLookup.error, "lookup_timeout");
   } finally {
     cap.restore();
   }

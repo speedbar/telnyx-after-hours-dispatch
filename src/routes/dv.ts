@@ -1,27 +1,48 @@
 // src/routes/dv.ts
 // POST /dv — Telnyx dynamic-variables webhook, called when a call starts
-// (assistant.initialization). Signature-verified, KV reads only (fast, no
-// external calls). Any internal failure still returns 200 with SAFE DEFAULTS
-// so the call always proceeds. Never logs the body, the phone number, the
+// (assistant.initialization). Signature-verified. Hot state (feature flag,
+// customer record) is read with ONE call to the DirectoryActor (D13, BUG-003:
+// actor storage ~0.1 s per op, KV ~1.5-1.9 s — two KV gets blew the 1.5 s
+// webhook timeout). KV stays the durable copy, written off the hot path by
+// /admin/seed. Any internal failure still returns 200 with SAFE DEFAULTS so
+// the call always proceeds. Never logs the body, the phone number, the
 // signature or any secret — only the salted caller_hash.
 
 import { readConfig } from "../lib/config";
-import { keys } from "../lib/kv-keys";
-import { callerHash, log, newRequestId } from "../lib/log";
+import { callerHash, log, newRequestId, timed } from "../lib/log";
 import { verifyTelnyx } from "../lib/sig";
 
 const BUSINESS_NAME = "Harbour Trades After-Hours";
 // TODO: replace with the real human escalation number, spoken in digit groups.
 const FALLBACK_NUMBER_SPOKEN = "zero four nine one, five seven zero, one five six";
 
-// The KV part matches the real binding's get(key) form (KvNamespace in
-// @telnyx/edge-runtime), so src/index.ts can pass its real env.
+// The lookup may never take longer than this; Telnyx's webhook timeout is
+// 1.5 s and we still need time to hash and respond.
+const LOOKUP_TIMEOUT_MS = 1000;
+
+// Raw result of a DirectoryActor.lookup call (raw strings, no parsing).
+export interface LookupResult {
+  flag: string | null;
+  customer: string | null;
+}
+
+// Local structural type for the DIRECTORY actor stub. telnyx-env.d.ts is
+// generated and only knows the bindings from the last `telnyx-edge types`
+// run, which the human runs; until then Env has no DIRECTORY member, so the
+// route types the stub itself (and marks it optional — see DvEnv).
+export interface DirectoryStub {
+  lookup(phoneDigits: string, flagName: string): Promise<LookupResult>;
+}
+
 export interface DvEnv {
-  DISPATCH_KV: { get(key: string): Promise<string | null> };
+  // Optional in the TYPE only so `{ ...env }` in src/index.ts compiles before
+  // the generated Env is regenerated; the binding exists at runtime. A
+  // missing binding degrades safely (see below).
+  DIRECTORY?: { idFromName(name: string): DirectoryStub };
   [key: string]: unknown;
 }
 
-// Expected shape of the cust/<digits> KV record.
+// Expected shape of the cust/<digits> record.
 interface CustomerRecord {
   customer_id?: unknown;
   name?: unknown;
@@ -30,10 +51,43 @@ interface CustomerRecord {
   after_hours_contract?: unknown;
 }
 
+// dv_degraded error names: the timeout race rejects with a sentinel message
+// that must surface as exactly "lookup_timeout"; every other failure is
+// "lookup_failed:" + the constructor name (never the message — a raw error
+// may embed the key, and the key contains phone digits).
+function lookupErrorName(err: unknown): string {
+  if (err instanceof Error && err.message === "lookup_timeout") {
+    return "lookup_timeout";
+  }
+  return "lookup_failed:" + (err instanceof Error ? err.name : "unknown");
+}
+
+// Race the actor call against a hard timeout so a slow or stuck actor can
+// never blow Telnyx's webhook budget. The timer is always cleared; the losing
+// promise's settlement stays handled by Promise.race.
+async function raceLookup(
+  stub: DirectoryStub,
+  phoneDigits: string,
+  timeoutMs: number,
+): Promise<LookupResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      stub.lookup(phoneDigits, "dispatch_enabled"),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("lookup_timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function handleDv(
   request: Request,
   env: DvEnv,
   nowMs: number = Date.now(),
+  lookupTimeoutMs: number = LOOKUP_TIMEOUT_MS,
 ): Promise<Response> {
   const request_id = newRequestId();
   const startedAt = performance.now();
@@ -109,28 +163,67 @@ export async function handleDv(
       caller_hash = await callerHash(phone, salt);
     }
 
-    const flagValue = await env.DISPATCH_KV.get(keys.flag("dispatch_enabled"));
-    const dispatch_enabled = flagValue === "false" ? "false" : "true";
+    // ONE directory call for the flag and the customer (KV is off the hot
+    // path, D13). With no phone there is still a lookup — phoneDigits "0" is
+    // an empty-safe stand-in (cust/0 never exists) so the flag still resolves.
+    const phoneDigits = phone !== undefined ? phone.replace(/\+/g, "") : "0";
+    const stub = env.DIRECTORY?.idFromName("directory");
+    if (stub === undefined) {
+      throw new Error("directory_unavailable");
+    }
+    const lookupStartedAt = performance.now();
+    let flag: string | null;
+    let customer: string | null;
+    try {
+      const lookup = await timed(() =>
+        raceLookup(stub, phoneDigits, lookupTimeoutMs),
+      );
+      flag = lookup.result.flag;
+      customer = lookup.result.customer;
+      log({
+        component: "dv",
+        event: "dv_lookup",
+        request_id,
+        call_ref,
+        caller_hash,
+        tool: "actor.lookup",
+        outcome: "ok",
+        latency_ms: lookup.latency_ms,
+      });
+    } catch (err) {
+      log({
+        component: "dv",
+        event: "dv_lookup",
+        level: "warn",
+        request_id,
+        call_ref,
+        caller_hash,
+        tool: "actor.lookup",
+        outcome: "fail",
+        latency_ms: Math.max(0, Math.round(performance.now() - lookupStartedAt)),
+        error: lookupErrorName(err),
+      });
+      throw err;
+    }
+
+    const dispatch_enabled = flag === "false" ? "false" : "true";
 
     let record: CustomerRecord | undefined;
-    if (phone !== undefined) {
-      const raw = await env.DISPATCH_KV.get(keys.customer(phone));
-      if (typeof raw === "string") {
-        try {
-          const parsedRecord: unknown = JSON.parse(raw);
-          if (parsedRecord !== null && typeof parsedRecord === "object") {
-            record = parsedRecord as CustomerRecord;
-          }
-        } catch {
-          log({
-            component: "dv",
-            event: "dv_bad_customer_record",
-            level: "warn",
-            request_id,
-            call_ref,
-            caller_hash,
-          });
+    if (typeof customer === "string") {
+      try {
+        const parsedRecord: unknown = JSON.parse(customer);
+        if (parsedRecord !== null && typeof parsedRecord === "object") {
+          record = parsedRecord as CustomerRecord;
         }
+      } catch {
+        log({
+          component: "dv",
+          event: "dv_bad_customer_record",
+          level: "warn",
+          request_id,
+          call_ref,
+          caller_hash,
+        });
       }
     }
 
@@ -156,8 +249,9 @@ export async function handleDv(
     });
     return Response.json({ dynamic_variables: variables }, { status: 200 });
   } catch (err) {
-    // KV error or bad JSON: answer with SAFE DEFAULTS so the call proceeds.
-    // Short message only — a raw error may embed the KV key (phone digits).
+    // Lookup error, timeout or bad JSON: answer with SAFE DEFAULTS so the
+    // call proceeds. Short error name only — a raw error may embed phone
+    // digits.
     log({
       component: "dv",
       event: "dv_degraded",
@@ -166,7 +260,7 @@ export async function handleDv(
       call_ref,
       caller_hash,
       outcome: "degraded",
-      error: "lookup_failed:" + (err instanceof Error ? err.name : "unknown"),
+      error: lookupErrorName(err),
     });
     const defaults: Record<string, string> = {
       call_ref,
