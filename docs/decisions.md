@@ -55,3 +55,9 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 - Why not C as the core: dispatch is transactional and state-based (reserve a technician, hand off the call). Exact lookups (customer, flags, job) belong in KV and the actor, not in similarity search. A vector store answers "what do our documents say", which is not this problem.
 - Where a vector store could fit: an optional FAQ knowledge base on the assistant (service area, after-hours rates, what to do while waiting). Not in the build plan; a Day 3 stretch only if everything else passes. Known unknowns: the workflows doc does not cover knowledge or retrieval scoping per node, and retrieval latency on a voice turn is unmeasured.
 - Revisit if: the Portal workflow editor cannot express the flow, or Stephen asks for a knowledge-base example.
+
+## D13 Hot-path state lives in Stateful Actor storage; KV is the off-path system of record (added 18 Nov 2026)
+- Evidence: V-010 / BUG-003. KV is about 1.5 to 1.9 s per operation; actor storage is under 0.1 s.
+- Choice: the /dv webhook and later the MCP tools read and write hot state (customer lookup, flags, reservations) through actors. KV keeps the durable copy (seeded and written outside the voice path, for example by the seed route and after a call ends), so KV is still used and still shows in the logs, but no caller waits on it.
+- Alternatives considered: parallel KV reads in /dv (still 1.5 to 1.9 s, over the default timeout); moving the customer lookup into a workflow tool (hides the delay behind speech but loses "Hi Ada" in the first line); bundling a customer list in code (fast, but puts phone numbers in the repo).
+- Revisit if: the KV latency turns out to be a tier or region setting we can change, or Telnyx documents a faster KV read mode.

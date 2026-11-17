@@ -22,3 +22,14 @@ Fix: use "/" as the separator in every KV key (flag/dispatch_enabled, cust/<e164
 Status: FIXED and verified 17 Nov 2026, 11:52 pm Sydney (V-005): /kv-test with key "kvtest/ping" returned ok:true.
 Signal that found it: a deployed test route that does a real write and read-back (a local type check cannot catch this, and `telnyx-edge dev` might not enforce it).
 What we would add to catch it faster: a key-format row in the verified-facts table; a unit test that every key builder output matches /^[A-Za-z0-9\-_\/=.]+$/.
+
+### BUG-003 KV operations take about 1.5 to 1.9 s each, and some fail intermittently, so /dv blows the dynamic-variables timeout
+When / where: 18 Nov 2026, about 12:55 to 1:01 am Sydney, live `dispatch` function, `POST /dv` (S1.2) and `POST /kv-test`.
+Symptom: a correctly signed /dv call returned the right variables but took 3.0 to 3.6 s (Telnyx's default webhook timeout is 1.5 s). Separately, three calls in a row for the seeded number returned `caller_known:"false"` with 200.
+Evidence: dv_out latency_ms 3320 and 3022 on healthy calls; curl time_total 3.1 to 3.6 s. Three calls logged `dv_degraded` with error `lookup_failed:Error` (dv_out latency 1783, 296 and 1875 ms). GET /health took 0.08 s warm; POST /actor-test (storage get + put inside the actor) took 0.09 to 0.10 s; POST /kv-test (one KV put + one KV get) took 3.7 to 3.9 s. /dv does two sequential KV gets.
+Hypotheses ruled out: network or function slowness (/health is 80 ms); Ed25519 verify or hashing (the actor route and /health are fast, the KV route is slow and /dv matches 2 x KV get); the `{ ...env }` spread losing the KV binding (the same code returned the customer on other calls, so the binding resolves).
+Root cause: KV operations from the edge function cost about 1.5 to 1.9 s each. Why is unknown (trial tier, distant KV backend, or a per-request cost); VERIFY. The intermittent `Error` is a KV get throwing; its message is not yet logged (the dv log keeps the error name only, because KV errors can contain the key and the key contains the phone number).
+Fix: planned in task S1.2b. Keep KV off the voice hot path. Hot state (customer lookup, flags, later reservations) lives in Stateful Actor storage, which is about 15 times faster. KV stays the system of record, written off the hot path.
+Signal that found it: the dv_out latency_ms field, a curl time_total comparison across /health, /actor-test and /kv-test, and the dv_degraded log line.
+What we would add to catch it faster: a latency budget per route in the spec, and a timed live call on every task that touches storage.
+Status: OPEN (workaround designed, not built).
