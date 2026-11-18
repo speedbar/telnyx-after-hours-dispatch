@@ -51,6 +51,13 @@ test("lookup does not parse the customer record (raw string out)", async () => {
   assert.equal(res.customer, "not json at all");
 });
 
+test("flag returns the stored string, and null when missing", async () => {
+  const map = new Map<string, unknown>([["flag/dispatch_enabled", "true"]]);
+  const actor = makeActor(map);
+  assert.equal(await actor.flag("dispatch_enabled"), "true");
+  assert.equal(await actor.flag("other_flag"), null);
+});
+
 test("seed stores every entry and returns the count", async () => {
   const map = new Map<string, unknown>();
   const actor = makeActor(map);

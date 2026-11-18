@@ -8,6 +8,7 @@ import { handleTech } from "./routes/tech";
 // the exported class name must equal the type).
 export { TechnicianActor } from "./actors/TechnicianActor";
 export { DirectoryActor } from "./actors/DirectoryActor";
+export { JobActor } from "./actors/JobActor";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {

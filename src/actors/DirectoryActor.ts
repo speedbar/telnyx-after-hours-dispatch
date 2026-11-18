@@ -23,6 +23,11 @@ export class DirectoryActor extends StatefulActor {
     return { flag: flag ?? null, customer: customer ?? null };
   }
 
+  // Single-flag read (same key helper and validation as lookup()).
+  async flag(name: string): Promise<string | null> {
+    return (await this.ctx.storage.get<string>(keys.flag(name))) ?? null;
+  }
+
   // Off-hot-path write used by /admin/seed. Every key is validated BEFORE any
   // write, so a bad key aborts the whole batch and nothing partial is stored.
   async seed(entries: Array<{ key: string; value: string }>): Promise<number> {

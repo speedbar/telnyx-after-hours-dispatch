@@ -10,6 +10,10 @@ type = "TechnicianActor"
 binding = "DIRECTORY"
 type = "DirectoryActor"
 
+[[actors]]
+binding = "JOBS"
+type = "JobActor"
+
 [storage.kv.DISPATCH_KV]
 id = "ce309914-f9dc-49c6-9429-632418ecec27"
 
