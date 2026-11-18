@@ -1,5 +1,6 @@
 import { readConfig } from "./lib/config";
 import { handleDv } from "./routes/dv";
+import { handleMcp } from "./routes/mcp";
 import { handleSeed } from "./routes/seed";
 import { handleTech } from "./routes/tech";
 
@@ -20,6 +21,7 @@ export default {
         secrets: {
           TELNYX_PUBLIC_KEY: readConfig(env, "TELNYX_PUBLIC_KEY") !== undefined,
           LOG_SALT: readConfig(env, "LOG_SALT") !== undefined,
+          MCP_TOKEN: readConfig(env, "MCP_TOKEN") !== undefined,
         },
       });
     }
@@ -28,6 +30,10 @@ export default {
       // signature, so it is not assignable to DvEnv as-is, and casting would
       // hide that. The spread keeps the real bindings/secrets by reference.
       return await handleDv(req, { ...env });
+    }
+    if (url.pathname === "/mcp") {
+      // Same spread pattern as /dv. Token check happens inside handleMcp.
+      return await handleMcp(req, { ...env });
     }
     if (url.pathname === "/admin/seed") {
       // Same spread pattern as /dv. Token check happens inside handleSeed.
