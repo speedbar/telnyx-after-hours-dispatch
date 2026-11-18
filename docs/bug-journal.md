@@ -33,3 +33,14 @@ Fix: planned in task S1.2b. Keep KV off the voice hot path. Hot state (customer 
 Signal that found it: the dv_out latency_ms field, a curl time_total comparison across /health, /actor-test and /kv-test, and the dv_degraded log line.
 What we would add to catch it faster: a latency budget per route in the spec, and a timed live call on every task that touches storage.
 Status: FIXED (by avoiding KV on the hot path) and verified live 18 Nov 2026, 1:58 am Sydney (V-011): /dv now takes 14 to 31 ms server-side (curl 0.22 to 0.35 s from Sydney including TLS), down from about 3.0 to 3.6 s. The slowness of KV itself is NOT fixed and its cause is still unknown.
+
+### BUG-004 OpenCode run stalls after a long reasoning step on GLM-5.3 (no tool call, no file written)
+When / where: 18 Nov 2026, 2:05 am (task S1.3, seven files) and 3:06 am (task S1.3a, two files) Sydney; OpenCode 1.19.6, model telnyx GLM-5.3.
+Symptom: after reading AGENTS.md, the spec and the listed files, the run went silent. No file was written and no further tool call appeared; about 50 minutes of waiting the first time and about 10 the second.
+Evidence: both session exports end in the middle of a thinking step (59.3 s, then 41.3 s) in which the model was drafting the full implementation and tests inside its reasoning, despite a new AGENTS.md rule not to. `git status` showed a clean tree both times. Balance went $3.59 to $3.47 to $3.41 (about $0.18 for two empty runs).
+Hypotheses ruled out: task too large (S1.3a was split down to two files and stalled the same way); a hung tool (no tool call was pending).
+Root cause (probable, VERIFY): GLM's reasoning uses up the output allowance before it emits a tool call. The limit itself is not visible to us.
+Fix: switched the same prompt to Kimi-K3. S1.3a completed in one run and passes tsc, the scrub check and all tests.
+Status: WORKED AROUND. Not fixed for GLM.
+Signal that found it: the human noticed the delay; `git status` and the session export confirmed nothing had been written.
+What we would add to catch it faster: if no file has changed within about 3 minutes of starting a run, stop, `/new`, switch model. Compare model cost and reliability in the README.
