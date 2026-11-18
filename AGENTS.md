@@ -16,7 +16,7 @@ A voice AI assistant for a trade business (plumber/electrician). After-hours cal
 ## Design
 - Workflow-first: the call skeleton is a deterministic Conversation Workflow. An LLM is used only inside nodes (triage, detail extraction, technician briefing).
 - Anything with consequences is deterministic code: reservation, retries, escalation, safety wording.
-- Primitives: Actor = per-technician reservation state (read-modify-write). KV = flags, customers, jobs, idempotency (no transactions, no compare-and-swap: never build locks or counters on it). Plain function logic otherwise. Record the reason in docs/decisions.md.
+- Primitives (D13): Actors hold all hot-path state: TechnicianActor = per-technician reservation, JobActor = per-call job record (instance name is the call_ref), DirectoryActor = customers and flags. KV is slow and is only an off-path durable record (no transactions, no compare-and-swap: never build locks or counters on it). Plain function logic otherwise. Record the reason in docs/decisions.md.
 - Business systems are mocked behind the MCP tools; the README says so.
 
 ## Conventions
@@ -32,11 +32,11 @@ A voice AI assistant for a trade business (plumber/electrician). After-hours cal
 - Do not modify .opencode/.
 
 ## Layout (target)
-src/index.ts      router: /dv /mcp /events /health /ops; re-exports TechnicianActor
-src/lib/          log.ts sig.ts kv.ts ids.ts
+src/index.ts      router: /dv /mcp /events /health /ops /admin/*; re-exports the actor classes
+src/lib/          log.ts sig.ts config.ts kv-keys.ts (S1.4b adds validate.ts pool.ts)
 src/routes/       dv.ts mcp.ts events.ts ops.ts
 src/tools/        lookup_customer.ts reserve_technician.ts create_job.ts release_technician.ts
-src/actors/       TechnicianActor.ts
+src/actors/       TechnicianActor.ts DirectoryActor.ts JobActor.ts
 assistant/        assistant.json workflow.json prompts/
 scripts/          scrub-sdk-examples.mjs simulate.ts seed.ts sign.ts apply-assistant.ts latency.ts
 tests/            sig.test.ts mcp.test.ts actor.test.ts guards.test.ts
