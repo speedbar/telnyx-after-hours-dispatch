@@ -35,7 +35,7 @@ interface SeedBody {
 
 // Constant-time token comparison; the length check runs first (different
 // lengths leak nothing beyond what the response already says).
-function tokenEqual(a: string, b: string): boolean {
+export function tokenEqual(a: string, b: string): boolean {
   if (a.length !== b.length) {
     return false;
   }
