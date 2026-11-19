@@ -61,3 +61,19 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 - Choice: the /dv webhook and later the MCP tools read and write hot state (customer lookup, flags, reservations) through actors. KV keeps the durable copy (seeded and written outside the voice path, for example by the seed route and after a call ends), so KV is still used and still shows in the logs, but no caller waits on it.
 - Alternatives considered: parallel KV reads in /dv (still 1.5 to 1.9 s, over the default timeout); moving the customer lookup into a workflow tool (hides the delay behind speech but loses "Hi Ada" in the first line); bundling a customer list in code (fast, but puts phone numbers in the repo).
 - Revisit if: the KV latency turns out to be a tier or region setting we can change, or Telnyx documents a faster KV read mode.
+
+## D14 End-of-turn detection (added 19 Nov 2026)
+- Choice: eager end-of-turn equals the end-of-turn threshold (0.8). Why: fewer cut-offs when callers read out numbers. Revisit after live phone calls.
+
+## D15 Delayed filler lines for MCP calls (added 19 Nov 2026)
+- Choice: short filler lines at 800 ms and 2500 ms while a tool runs, so the caller does not hear silence.
+
+## D16 Golden set in two layers (added 19 Nov 2026)
+- Choice: layer 1 checks tool schemas and server behaviour deterministically; layer 2 replays scripted conversations. Status: planned, not built.
+
+## D17 The server identifies the call and the job (added 19 Nov 2026, proposed)
+- Why: the model made up call_ref and job_id (BUG-006 to 011). The server now prefers Telnyx call metadata (field names unverified, V-016), else a safe hash, and derives job_id from the JobActor record.
+- Failures return next:"fallback", retry:false and the missing fields. Status: written in the working tree, not shipped.
+
+## D18 Scripted safety wording (added 19 Nov 2026)
+- Choice: fixed sentences for water near electrics and for gas, no other safety advice. Gas: do not use switches or flames, leave and call triple zero from outside. Status: pending live check and tradesperson review.
