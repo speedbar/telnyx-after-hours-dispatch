@@ -160,6 +160,76 @@ Fix: one delayed filler at 1500 ms; reserve latency (BUG-005) still to reduce.
 Signal that found it: call CSV timestamps against the mcp_call latency log lines.
 Status: mitigation in S1.7 and Portal changes, pending live re-test.
 
+### BUG-016 Assistant talked about a "SIP address" instead of asking for a callback number
+When / where: 19 Nov 2026, Portal web test call after the S1.7 Portal changes (job JAJ3V6; exact test number VERIFY against the CSV).
+Symptom: in the Details node the assistant said it could offer "the number you're calling from" but that it "comes through as a SIP address, so I can't use it" — a garbled, technical sentence the caller should never hear.
+Evidence: assistant message in the call CSV (Conversation History export).
+Root cause: a Portal web call has no phone number (the caller is a SIP address), and the prompt offered the calling number without saying what to do when it is unusable. Mostly a web-call artefact, but the wording had no rule for it.
+Fix: assistant instruction added: if there is no usable caller number, ask for the best number; never mention SIP or caller ID. Real phone calls carry a real number (checked on the 20 Nov calls).
+Signal that found it: transcript review.
+What we would add to catch it faster: a chat-test assertion that no assistant reply contains "SIP" or "caller ID".
+Status: fixed in the Portal wording; no SIP talk in the next two calls; real-number calls on 20 Nov show the real caller number.
+
+### BUG-017 House number dropped from the address
+When / where: 19 Nov 2026, same call as BUG-016 (job JAJ3V6).
+Symptom: the caller gave the street address in words ("two twenty six two zero two ... Crescent"); the assistant read back and saved only "2-2-6 ... Crescent", dropping part of the number.
+Evidence: call CSV: the caller's words against the read-back and the reserve_technician address argument.
+Root cause: the assistant-level rule to read addresses digit by digit conflicted with the Details node, and the model shortened the number. Speech-to-text may also have blurred the number (what exactly was said is not certain).
+Fix: assistant instruction: repeat the address exactly as heard, in normal words ("two twenty-six"), never drop a number, ask again if unsure. Later S1.8 flags addresses with no house number (address_no_house_number).
+Signal that found it: transcript review.
+What we would add to catch it faster: a golden-set case with a spoken house number, asserting the digits in the tool-call address. The 20 Nov live chat run still showed house numbers written as words (open model fault, cfg-6 candidate: write house numbers as digits).
+Status: fixed for the case seen; the next two calls saved "226" correctly; words-versus-digits remains a cfg-6 item.
+
+### BUG-018 Invented detail in the summary ("kitchen sink" when the caller said "sink")
+When / where: 19 Nov 2026, same call as BUG-016 (job JAJ3V6).
+Symptom: the job summary said "kitchen sink" but the caller said only "sink".
+Evidence: caller words against the summary argument in the call CSV.
+Root cause: the model added plausible detail the caller never said (a close cousin of the earlier "McKitchon" speech-to-text finding).
+Fix: assistant instruction: use only words the caller said. Later cfg-4 Facts line: write only words the caller clearly said, leave out unclear words.
+Signal that found it: transcript review.
+What we would add to catch it faster: a check that flags words in the summary or hazards that the caller never spoke.
+Status: fixed for the case seen (the next two calls kept "kitchen sink" only when said). Recurrence on 20 Nov: the caller said "gas leakage" and the model wrote hazards "Gas smell reported" (job JA7M5V); still an open minor fault.
+
+### BUG-019 Ten seconds of dead air after "Let me log that now"
+When / where: 19 Nov 2026, Portal web gas call, re-test after BUG-016 to BUG-018 fixes (jobs JAZG45 and JA9JSD).
+Symptom: after the assistant said "Thanks, Alex. Let me log that now." nothing happened for about 10 seconds; the platform injected a "[long silence]" event before reserve_technician ran. In the plumbing call, with no spoken line, the model moved on at once.
+Evidence: gas call CSV timestamps and the "[long silence]" event; reserve_technician call after the gap.
+Root cause: speaking that line ended the model's turn before it made the tool call, so the call waited for the caller.
+Fix: Details node: delete the spoken line and say "When everything is confirmed, move on immediately. Say nothing more."; Reserve speaks nothing and the platform filler covers delay.
+Signal that found it: CSV timestamps and the injected silence event.
+What we would add to catch it faster: a check on call CSVs for any gap over about 3 seconds between a spoken line and the next action.
+Status: fixed; the next gas call (JAZ4JB) had no dead air.
+
+### BUG-020 Workflow edges fire unreliably (Triage did Details' job, Job to Close never fired)
+When / where: 19 Nov 2026, same two web calls as BUG-019; reconfirmed on the 20 Nov real-number call.
+Symptom: in the gas call Triage asked "name and address?" itself and the Triage to Details edge fired only after the callback number was confirmed; in both calls the Job to Close edge never fired and the model improvised the ending ("Goodbye for now", or just hung up) from the Job node. On 20 Nov the only transition recorded was triage to details.
+Evidence: flow_node_id per message in the CSVs; the call metadata flow_transitions on 20 Nov (one transition; tools called reserve_technician, create_job, hangup).
+Root cause: with GLM-5.3-Flash the LLM edges fire only if the model calls the transition tool, so they are advisory (see BUG-012). The data was still correct.
+Fix: Triage text: do not ask for name, address or phone here; edge wording tightened; the Job node now says the reference, the "logged" line and the goodbye itself, and the Job to Close edge was deleted (Close and Hang Up remain for the Fallback path). The assistant-level instructions carry the whole call order. A fixed node order is no longer a pass criterion.
+Signal that found it: flow_node_id per message plus transcript review.
+What we would add to catch it faster: log the node sequence per call (as in BUG-012). Be ready for the question "why a workflow if the model skips nodes?"
+Status: accepted limitation, mitigated and to be disclosed in the README and demo.
+
+### BUG-021 Call never ended: Hang Up was off in the Details node
+When / where: 19 Nov 2026, Portal web sink call (job JAWQ7H).
+Symptom: after the goodbye the caller said "thank you" and the call continued; no hangup was called.
+Evidence: no hangup tool call in the call CSV; of the last four calls only the one where Hang Up was available ended cleanly.
+Root cause: the Hang Up tool was switched off in the Details node (the model ran the whole call from Details).
+Fix: Portal: Hang Up ON in every node, Override tools ON only in Triage and Details.
+Signal that found it: CSV review (no hangup tool call).
+What we would add to catch it faster: a voice checklist item that every call ends with the hangup tool call.
+Status: fixed; later calls end with hangup (gas call JAZ4JB; 20 Nov calls).
+
+### BUG-022 Duplicate goodbyes
+When / where: 19 Nov 2026, same sink call as BUG-021 (job JAWQ7H).
+Symptom: the assistant said goodbye, the caller said "thank you", and the assistant said goodbye twice more.
+Evidence: call CSV: three goodbyes, no hangup.
+Root cause: no rule against repeating the goodbye, and no hangup (BUG-021) to end the call.
+Fix: assistant instruction: after saying goodbye, do not say goodbye again; end the call with the hangup tool. cfg-5 adds: goodbye only once, as the last words, never with a question.
+Signal that found it: transcript review.
+What we would add to catch it faster: a chat-test assertion that the goodbye appears once (the harness already checks goodbye with a question).
+Status: fixed; the 20 Nov call (JA7M5V) had one goodbye.
+
 ### BUG-023 Model classified a sink leak as `urgent` after speech-to-text mangled the caller's words
 When / where: 19 Nov 2026, 05:42 UTC live call (test 5 or 6), Triage stage.
 Symptom: the reserve_technician call carried `urgency: "urgent"` for what the caller said as "water is drying out fast"; nothing raised it to emergency.
