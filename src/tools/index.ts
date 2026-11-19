@@ -45,6 +45,10 @@ export interface JobStub {
     trade: string;
     suburb: string;
     summary: string;
+    flags?: string[];
+    customer_name?: string;
+    address?: string;
+    contact_phone?: string;
   }): Promise<
     { ok: true; state: string; created: boolean } | { ok: false; reason: string }
   >;

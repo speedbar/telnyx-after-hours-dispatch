@@ -80,6 +80,91 @@ export function normalisePhone(raw: unknown): string | null {
   return s;
 }
 
+const ALL_SAME = /^(\d)\1+$/;
+
+// Callback hard reject: only what makes the job impossible (an undiallable
+// number). Runs after normalisePhone; returns the normalised digits or null.
+// Non-AU numbers that pass normalisePhone stay accepted (caller may be abroad).
+export function dialableCallback(raw: unknown): string | null {
+  const s = normalisePhone(raw);
+  if (s === null) return null;
+  // An AU number must be exactly 11 digits after the 0 -> 61 rewrite
+  // (rejects 0412345, which normalises to the 8-digit 61412345).
+  if (s.startsWith("61") && s.length !== 11) return null;
+  // Emergency or service numbers, and anything of 6 or fewer digits.
+  if (s === "000" || s === "112" || s === "106" || s.length <= 6) return null;
+  // All same digit is fake ("2222222222"). Checked on the raw digits too,
+  // because the 0 -> 61 rewrite would mask an all-zero input ("0000000000").
+  if (ALL_SAME.test(s)) return null;
+  const rawDigits = (raw as string).replace(/\D/g, "");
+  if (rawDigits.length > 0 && ALL_SAME.test(rawDigits)) return null;
+  return s;
+}
+
+// Whole-word (case-insensitive) match, so "gaslight" does not match "gas".
+const wordHit = (lower: string, w: string): boolean =>
+  new RegExp(`\\b${w}\\b`).test(lower);
+
+const EMERGENCY_WORDS = [
+  "gas",
+  "smoke",
+  "spark",
+  "sparks",
+  "sparking",
+  "burning",
+  "electrocuted",
+  "shock",
+  "flood",
+  "flooding",
+  "burst",
+  "sewage",
+  "fire",
+  "carbon monoxide",
+] as const;
+
+// Severity and trade floors (S1.8): the model's values are never lowered.
+// Conservative on purpose: any "gas" mention routes to a gas-licensed
+// technician and is treated as an emergency (D19).
+export function applyFloors(
+  trade: string,
+  urgency: string,
+  summary: string,
+): { trade: string; urgency: string; raised: boolean; corrected: boolean } {
+  const lower = summary.toLowerCase();
+  let t = trade;
+  let u = urgency;
+  let raised = false;
+  let corrected = false;
+  if (u !== "emergency" && EMERGENCY_WORDS.some((w) => wordHit(lower, w))) {
+    u = "emergency";
+    raised = true;
+  }
+  if (t !== "gas" && wordHit(lower, "gas")) {
+    t = "gas";
+    corrected = true;
+  }
+  if (t === "gas" && u !== "emergency") {
+    u = "emergency";
+    raised = true;
+  }
+  return { trade: t, urgency: u, raised, corrected };
+}
+
+// Soft flags (S1.8): accept the job, attach flag names for a human review.
+// Computed from the cleaned inputs; names only, never logged with values.
+export function jobFlags(args: {
+  customer_name: string;
+  address: string;
+  suburb: string;
+}): string[] {
+  const flags: string[] = [];
+  if (!/\d/.test(args.address)) flags.push("address_no_house_number");
+  if (args.address.length < 8) flags.push("address_short");
+  if (args.customer_name.length < 2) flags.push("name_short");
+  if (/\d/.test(args.suburb)) flags.push("suburb_numeric");
+  return flags;
+}
+
 const JOB_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
 
 // Deterministic job id from the call ref: "JA" + 4 chars from the SHA-256.

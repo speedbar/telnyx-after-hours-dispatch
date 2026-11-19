@@ -159,3 +159,14 @@ Root cause: each MCP call starts its own filler timers, two tool calls ran in on
 Fix: one delayed filler at 1500 ms; reserve latency (BUG-005) still to reduce.
 Signal that found it: call CSV timestamps against the mcp_call latency log lines.
 Status: mitigation in S1.7 and Portal changes, pending live re-test.
+
+### BUG-023 Model classified a sink leak as `urgent` after speech-to-text mangled the caller's words
+When / where: 19 Nov 2026, 05:42 UTC live call (test 5 or 6), Triage stage.
+Symptom: the reserve_technician call carried `urgency: "urgent"` for what the caller said as "water is drying out fast"; nothing raised it to emergency.
+Evidence: transcript of the 19 Nov 05:42 UTC call, `urgency: "urgent"` in the tool-call arguments.
+Hypotheses ruled out: a prompt wording slip (the urgency rule is in the prompt and the model still got it wrong on mangled input).
+Root cause: urgency was trusted from the model. Prompts cannot be the only guardrail on noisy speech-to-text.
+Fix (S1.8, spec item 2): severity and trade floors in code — whole-word keywords in the summary (flood, burst, gas, sparking, ...) raise urgency to `emergency`, a "gas" mention corrects the trade to `gas`, and the model's own value is never lowered.
+Signal that found it: reading the transcript.
+What we would add to catch it faster: a golden-set case replaying mangled STT phrases and asserting the stored urgency.
+Status: fixed in S1.8, pending live re-test.

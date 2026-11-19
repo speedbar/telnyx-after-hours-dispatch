@@ -4,6 +4,7 @@
 // the TechnicianActor must not have expired. A replay after "briefed" skips
 // the hold check. Failures as data; no customer data in error strings.
 
+import { log } from "../lib/log.js";
 import {
   cleanText,
   normalisePhone,
@@ -42,10 +43,15 @@ export async function handleCreateJob(
   // Blank optional strings ("", whitespace-only) count as "not provided".
   const blank = (v: unknown): boolean =>
     typeof v === "string" && v.trim() === "";
-  const hazards =
+  // "none" / "no" / "nil" / "n/a" / "not applicable" (any case, trailing
+  // punctuation) mean no hazards were provided, not a hazard named "none".
+  const HAZARD_NONE = /^(none|no|nil|n\/?a|not applicable)[.!]*$/i;
+  const hazardsRaw =
     a.hazards === undefined || blank(a.hazards)
       ? undefined
-      : cleanText(a.hazards, 200);
+      : typeof a.hazards === "string" && HAZARD_NONE.test(a.hazards.trim())
+        ? undefined
+        : cleanText(a.hazards, 200);
   const contact_phone =
     a.contact_phone === undefined || blank(a.contact_phone)
       ? undefined
@@ -55,7 +61,7 @@ export async function handleCreateJob(
     customer_name === null ||
     address === null ||
     details === null ||
-    hazards === null ||
+    hazardsRaw === null ||
     contact_phone === null
   ) {
     const bad_fields: string[] = [];
@@ -64,9 +70,10 @@ export async function handleCreateJob(
     if (address === null) bad_fields.push("address");
     if (contact_phone === null) bad_fields.push("contact_phone");
     if (details === null) bad_fields.push("details");
-    if (hazards === null) bad_fields.push("hazards");
+    if (hazardsRaw === null) bad_fields.push("hazards");
     return fail("invalid_input", bad_fields);
   }
+  const hazards = hazardsRaw;
 
   const jobsStub = jobs.idFromName(call_ref);
   const job = await jobsStub.get();
@@ -74,6 +81,12 @@ export async function handleCreateJob(
     return fail("no_active_reservation");
   }
   const job_id = job.job_id;
+  // Already briefed (S1.8): first write wins. Return the same success result
+  // and never overwrite the stored details.
+  if (job.state === "briefed") {
+    log({ component: "mcp", event: "brief_replay", tool: "create_job", call_ref, job_id });
+    return { ok: true, job_id, reference_spoken: spoken(job_id) };
+  }
   if (job.state === "reserved") {
     const s = await tech.idFromName(job.tech_id).status();
     const h = s.held_for;
@@ -87,6 +100,8 @@ export async function handleCreateJob(
     }
   }
 
+  // The JobActor keeps the callback stored at reservation (first confirmed
+  // wins) and drops "none"-style hazards, so pass both through as-is.
   const briefed = await jobsStub.brief({
     job_id,
     customer_name,

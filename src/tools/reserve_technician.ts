@@ -6,11 +6,14 @@
 // untrusted model output: validate first, failures as data.
 
 import { readConfig } from "../lib/config";
-import { TECH_POOL } from "../lib/pool";
+import { log } from "../lib/log.js";
+import { TECH_POOL, TECH_PROFILES, type Trade } from "../lib/pool";
 import {
+  applyFloors,
   cleanText,
+  dialableCallback,
+  jobFlags,
   jobIdFromCallRef,
-  normalisePhone,
   oneOf,
   resolveCallRef,
 } from "../lib/validate";
@@ -74,7 +77,8 @@ export async function handleReserveTechnician(
   // asked for them (BUG-006). Validate only; not stored in this task.
   const customer_name = cleanText(a.customer_name, 80);
   const address = cleanText(a.address, 200);
-  const callback_number = normalisePhone(a.callback_number);
+  // Hard reject only an undiallable callback (S1.8); everything else is flagged.
+  const callback_number = dialableCallback(a.callback_number);
   if (
     call_ref === null ||
     urgency === null ||
@@ -97,6 +101,18 @@ export async function handleReserveTechnician(
     return fail("invalid_input", bad_fields);
   }
 
+  // Severity and trade floors (S1.8): the effective values are what is
+  // stored and used for eligibility. Event names only, never values.
+  const floored = applyFloors(trade, urgency, summary);
+  if (floored.raised) {
+    log({ component: "mcp", event: "urgency_raised", tool: "reserve_technician", call_ref });
+  }
+  if (floored.corrected) {
+    log({ component: "mcp", event: "trade_corrected", tool: "reserve_technician", call_ref });
+  }
+  // Soft flags: the job is accepted and reviewed by a human later (D19).
+  const flags = jobFlags({ customer_name, address, suburb });
+
   const job_id = await jobIdFromCallRef(call_ref);
   const ttl_s = holdTtl(env);
   const [flag, job] = await Promise.all([
@@ -116,8 +132,23 @@ export async function handleReserveTechnician(
     return success(job.job_id, r.expires_at, attempt);
   }
 
-  for (let i = 0; i < TECH_POOL.length; i++) {
-    const tech_id = TECH_POOL[i];
+  // Eligibility by licensed trade (S1.8): try only technicians whose trades
+  // include the effective trade, in pool order. attempt is 1-based within
+  // this eligible list.
+  const eligible = TECH_POOL.filter((id) => {
+    const profile = TECH_PROFILES[id];
+    return profile.trades.includes(floored.trade as Trade);
+  });
+  log({
+    component: "mcp",
+    event: "reserve_attempt",
+    tool: "reserve_technician",
+    call_ref,
+    eligible_count: eligible.length,
+  });
+
+  for (let i = 0; i < eligible.length; i++) {
+    const tech_id = eligible[i];
     const r = await tech
       .idFromName(tech_id)
       .reserve({ call_ref, job_id, ttl_s });
@@ -125,10 +156,14 @@ export async function handleReserveTechnician(
     const opened = await jobs.idFromName(call_ref).open({
       job_id,
       tech_id,
-      urgency,
-      trade,
+      urgency: floored.urgency,
+      trade: floored.trade,
       suburb,
       summary,
+      flags,
+      customer_name,
+      address,
+      contact_phone: callback_number,
     });
     if (!opened.ok) {
       await tech.idFromName(tech_id).release({ call_ref, job_id });

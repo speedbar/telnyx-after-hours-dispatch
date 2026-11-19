@@ -28,6 +28,8 @@ export interface LogFields {
   bad_fields?: string; // comma-joined validation-failed field names, never values
   meta_keys?: string; // comma-joined key names of tools/call _meta, names only
   call_ref_source?: "meta" | "args" | "none";
+  eligible_count?: number; // technician pool size after trade eligibility (count only)
+  flags?: string; // comma-joined soft-validation flag names, names only
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -37,7 +39,7 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
       : fields.error.length > 300
         ? fields.error.slice(0, 300)
         : fields.error;
-  // Key order below is part of the contract: exactly these 18 keys,
+  // Key order below is part of the contract: exactly these 20 keys,
   // in this order, with null for anything not supplied.
   return JSON.stringify({
     ts: now.toISOString(),
@@ -58,6 +60,8 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     bad_fields: fields.bad_fields ?? null,
     meta_keys: fields.meta_keys ?? null,
     call_ref_source: fields.call_ref_source ?? null,
+    eligible_count: fields.eligible_count ?? null,
+    flags: fields.flags ?? null,
   });
 }
 

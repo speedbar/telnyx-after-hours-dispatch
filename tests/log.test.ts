@@ -27,9 +27,11 @@ const EXPECTED_KEYS = [
   "bad_fields",
   "meta_keys",
   "call_ref_source",
+  "eligible_count",
+  "flags",
 ];
 
-test("formatLine output parses as JSON with exactly the 18 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 20 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -49,6 +51,8 @@ test("formatLine output parses as JSON with exactly the 18 keys in order", () =>
       bad_fields: "phone,address",
       meta_keys: "telnyx_conversation_id",
       call_ref_source: "meta",
+      eligible_count: 2,
+      flags: "address_short,name_short",
     },
     new Date("2026-11-18T00:00:00.000Z"),
   );
@@ -57,6 +61,8 @@ test("formatLine output parses as JSON with exactly the 18 keys in order", () =>
   assert.equal(parsed.bad_fields, "phone,address");
   assert.equal(parsed.meta_keys, "telnyx_conversation_id");
   assert.equal(parsed.call_ref_source, "meta");
+  assert.equal(parsed.eligible_count, 2);
+  assert.equal(parsed.flags, "address_short,name_short");
 });
 
 test("minimal fields: level defaults to info, every other field is null", () => {

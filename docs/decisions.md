@@ -77,3 +77,10 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 
 ## D18 Scripted safety wording (added 19 Nov 2026)
 - Choice: fixed sentences for water near electrics and for gas, no other safety advice. Gas: do not use switches or flames, leave and call triple zero from outside. Status: pending live check and tradesperson review.
+
+## D19 Guardrails in code, not prompts (added 20 Nov 2026, S1.8)
+- Evidence: live tests 5 and 6 (19 Nov 2026) and a code review. Speech-to-text mangles caller words ("water is drying out fast" was classed `urgent`), reserve_technician ignored the job's trade when walking the pool, normalisePhone accepted undiallable callbacks, a second create_job overwrote confirmed details, and job records with personal data were kept forever.
+- Choice: guardrails in code, not prompts — severity and trade floors (keywords in the summary raise urgency, never lower it), technician eligibility by licensed trade, hard reject only for an undiallable callback, soft flags for the rest (accepted job, human review), first-write-wins briefing, 7 day retention of job records via an actor alarm.
+- Conservative-gas rule: any whole-word "gas" mention corrects the trade to `gas` and forces `emergency`, so a gas hot water complaint is routed to a gas-licensed technician and treated as an emergency. A false emergency beats a missed one on an after-hours call.
+- Known limitation: suburb or area matching is NOT built — eligibility is by licensed trade only; a technician may be reserved for a job far away.
+- Why not prompt wording: prompts are advice to the model; code is a wall. Anything with consequences (reservation, retries, safety) stays deterministic.
