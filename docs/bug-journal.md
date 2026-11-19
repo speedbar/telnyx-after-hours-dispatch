@@ -121,3 +121,41 @@ Fix (S1.5, spec item 5): every failure carries bad_fields (names only), the rout
 Signal that found it: only by reading the transcript next to the logs.
 What we would add to catch it faster: this exact fix — rejections must be self-explanatory in our own logs.
 Status: fixed in S1.5, pending live re-test.
+
+### BUG-012 Workflow collapsed into the Triage node
+When / where: 19 Nov 2026, live test 4 (two calls).
+Symptom: every message in both calls was labelled flow_node_id triage; reserve_technician, create_job and the closing speech came from one LLM request in call 2; call 1 jumped from Triage to Close and skipped Details, Reserve and Job.
+Evidence: Conversation History CSVs for the two calls; mcp_call log lines.
+Root cause (hypothesis): MCP tools are assistant-level and the Triage node still had the full toolset; the long assistant-level instructions also covered the whole task; "do not call tools" wording can stop the transition tools from firing (Telnyx workflows doc).
+Fix: per-node tool override in the Portal, node texts rewritten to name only the forbidden tools, assistant-level instructions shortened.
+Signal that found it: flow_node_id per message plus mcp_call logs.
+What we would add to catch it faster: a log or test that checks the node sequence per call.
+Status: mitigation in S1.7 and Portal changes, pending live re-test.
+
+### BUG-013 False technician promise
+When / where: 19 Nov 2026, live test 4 (call 2).
+Symptom: the assistant said a named plumber was on the way with a 30 minute arrival, though no technician was contacted.
+Evidence: last assistant message in the call 2 CSV; the reserve_technician result contained technician_name and eta_minutes.
+Root cause: the tool result invited the promise and the Reserve node text said to remember the technician's name.
+Fix: S1.7 removes those fields and tool descriptions forbid the claim; Reserve node text updated.
+Signal that found it: transcript review.
+What we would add to catch it faster: a golden-set check that fails any reply naming a technician or arrival time.
+Status: mitigation in S1.7 and Portal changes, pending live re-test.
+
+### BUG-014 Unscripted safety advice
+When / where: 19 Nov 2026, live test 4 (calls 1 and 2).
+Symptom: advice to switch off power at the switchboard (call 1) and to turn off the water supply (call 2); the scripted lines (D18) never ran.
+Evidence: Conversation History CSVs for the two calls (see BUG-012).
+Root cause: the call never reached the Details node where the scripted lines live (see BUG-012).
+Fix: pending the workflow fix; re-test with a water-near-electrics and a gas call.
+Signal that found it: transcript review.
+Status: mitigation in S1.7 and Portal changes, pending live re-test.
+
+### BUG-015 Stacked filler messages
+When / where: 19 Nov 2026, live test 4 (call 2).
+Symptom: the caller heard "One moment", "Thanks for waiting, I'm still on it" and "One moment" in a row, after the work had finished.
+Evidence: call 2 CSV timestamps against the mcp_call latencies (reserve 1.69 s, create_job 0.44 s).
+Root cause: each MCP call starts its own filler timers, two tool calls ran in one turn, and the fillers queued.
+Fix: one delayed filler at 1500 ms; reserve latency (BUG-005) still to reduce.
+Signal that found it: call CSV timestamps against the mcp_call latency log lines.
+Status: mitigation in S1.7 and Portal changes, pending live re-test.

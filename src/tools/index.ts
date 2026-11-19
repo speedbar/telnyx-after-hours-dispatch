@@ -93,8 +93,7 @@ export interface ToolDefinition {
 const CALL_REF_PROP = {
   type: "string",
   maxLength: 200,
-  description:
-    "Use the call_ref value from your instructions. It is never a phone number or SIP address. Optional; the server can identify the call itself.",
+  description: "Optional. Not needed; the server identifies the call itself.",
 } as const;
 
 export const TOOLS: ToolDefinition[] = [
@@ -119,7 +118,7 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: "reserve_technician",
     description:
-      "Reserve an on-call technician. Call this once, only after you have confirmed the caller's name, address and callback number and know the urgency, trade and suburb. Do not call it earlier. If it fails, do not retry.",
+      "Reserve an on-call technician. Call this once, only after you have confirmed the caller's name, address and callback number and know the urgency, trade and suburb. Returns only a reservation. No technician has been contacted. Never tell the caller a technician is on the way, and never give a technician name or an arrival time. If it fails, do not retry.",
     inputSchema: {
       type: "object",
       properties: {
@@ -177,7 +176,7 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: "create_job",
     description:
-      "Record the caller's details for the technician. Call once, only after reserve_technician succeeded. Do not retry if it fails.",
+      "Record the caller's details for the technician. Call once, only after reserve_technician succeeded. Do not retry if it fails. Never promise anything beyond logging the job.",
     inputSchema: {
       type: "object",
       properties: {
@@ -185,8 +184,7 @@ export const TOOLS: ToolDefinition[] = [
         job_id: {
           type: "string",
           maxLength: 6,
-          description:
-            "Optional. The server knows the job from the call; do not invent one.",
+          description: "Optional. Ignored; the server uses its own record.",
         },
         customer_name: {
           type: "string",
@@ -230,8 +228,7 @@ export const TOOLS: ToolDefinition[] = [
         job_id: {
           type: "string",
           maxLength: 6,
-          description:
-            "Optional. The server knows the job from the call; do not invent one.",
+          description: "Optional. Ignored; the server uses its own record.",
         },
         reason: {
           type: "string",

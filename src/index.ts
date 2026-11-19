@@ -22,6 +22,7 @@ export default {
           TELNYX_PUBLIC_KEY: readConfig(env, "TELNYX_PUBLIC_KEY") !== undefined,
           LOG_SALT: readConfig(env, "LOG_SALT") !== undefined,
           MCP_TOKEN: readConfig(env, "MCP_TOKEN") !== undefined,
+          FALLBACK_NUMBER: readConfig(env, "FALLBACK_NUMBER") !== undefined,
         },
       });
     }

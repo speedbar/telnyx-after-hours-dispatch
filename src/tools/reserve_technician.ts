@@ -6,7 +6,7 @@
 // untrusted model output: validate first, failures as data.
 
 import { readConfig } from "../lib/config";
-import { ETA_MINUTES, TECH_NAMES, TECH_POOL } from "../lib/pool";
+import { TECH_POOL } from "../lib/pool";
 import {
   cleanText,
   jobIdFromCallRef,
@@ -36,22 +36,12 @@ function holdTtl(env: ToolEnv): number {
   return Number.isInteger(n) && n >= 1 && n <= 600 ? n : 90;
 }
 
-function techName(id: string): string {
-  return (TECH_NAMES as Record<string, string>)[id] ?? id;
-}
-
-function success(
-  job_id: string,
-  tech_id: string,
-  expires_at: number,
-  attempt: number,
-): ToolResult {
+// Reservation only: no technician identity or ETA in the result, so the model
+// cannot promise a name or an arrival time (BUG-013).
+function success(job_id: string, expires_at: number, attempt: number): ToolResult {
   return {
     ok: true,
     job_id,
-    technician_id: tech_id,
-    technician_name: techName(tech_id),
-    eta_minutes: ETA_MINUTES,
     hold_expires_at: new Date(expires_at).toISOString(),
     attempt,
   };
@@ -123,7 +113,7 @@ export async function handleReserveTechnician(
       .reserve({ call_ref, job_id: job.job_id, ttl_s });
     if (!r.ok) return fail("no_technician_available");
     const attempt = Math.max(1, (TECH_POOL as readonly string[]).indexOf(job.tech_id) + 1);
-    return success(job.job_id, job.tech_id, r.expires_at, attempt);
+    return success(job.job_id, r.expires_at, attempt);
   }
 
   for (let i = 0; i < TECH_POOL.length; i++) {
@@ -144,7 +134,7 @@ export async function handleReserveTechnician(
       await tech.idFromName(tech_id).release({ call_ref, job_id });
       return fail(mapOpenReason(opened.reason));
     }
-    return success(job_id, tech_id, r.expires_at, i + 1);
+    return success(job_id, r.expires_at, i + 1);
   }
   return fail("no_technician_available");
 }
