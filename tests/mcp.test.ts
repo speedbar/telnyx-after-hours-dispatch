@@ -263,12 +263,84 @@ test("8. tools/call shapes: success, business failure and throw; mcp_call logs",
       ["ok", "rejected", "fail"],
     );
     assert.ok(logs.every((l) => typeof l.latency_ms === "number"));
-    assert.equal(logs[0].call_ref, "cr-1");
+    // The raw model call_ref is never logged; the resolved safe "c:" ref is.
+    assert.match(String(logs[0].call_ref), /^c:[0-9a-f]{32}$/);
+    assert.equal(logs[0].call_ref_source, "args");
+    assert.equal(logs[1].call_ref, null);
+    assert.equal(logs[1].call_ref_source, "none");
     assert.equal(logs[1].error, "x");
     assert.equal(logs[2].error, "TypeError");
     const joined = cap.lines.join("\n");
+    assert.ok(!joined.includes("cr-1"), "no raw call_ref in the logs");
     assert.ok(!joined.includes("value123"), "no argument values in the logs");
     assert.ok(!joined.includes("boom secret payload"));
+  } finally {
+    cap.restore();
+  }
+});
+
+test("11. tools/call: _meta conversation id wins, meta key names logged (never values), ctx reaches the handler", async () => {
+  const cap = captureLog();
+  const seen: unknown[] = [];
+  const registry: ToolDefinition[] = [
+    {
+      name: "ctx_tool",
+      description: "captures ctx and returns bad_fields",
+      inputSchema: { type: "object" },
+      handler: async (_args, _env, ctx) => {
+        seen.push(ctx);
+        return { ok: false, reason: "invalid_input", bad_fields: ["phone", "address"] };
+      },
+    },
+  ];
+  try {
+    let res = await handleMcp(
+      mcpRequest(
+        rpc("tools/call", {
+          name: "ctx_tool",
+          arguments: { call_ref: "model-sent-ref" },
+          _meta: { telnyx_conversation_id: "conv-9z8y7x", other_stuff: "shh" },
+        }),
+        { token: TOKEN },
+      ),
+      env,
+      registry,
+    );
+    let body = await res.json();
+    assert.equal(body.result.isError, false);
+
+    // Fallback key name also accepted.
+    res = await handleMcp(
+      mcpRequest(
+        rpc("tools/call", {
+          name: "ctx_tool",
+          arguments: {},
+          _meta: { conversation_id: "alt-conv-id" },
+        }),
+        { token: TOKEN },
+      ),
+      env,
+      registry,
+    );
+    body = await res.json();
+
+    assert.deepEqual(seen, [
+      { meta_conversation_id: "conv-9z8y7x" },
+      { meta_conversation_id: "alt-conv-id" },
+    ]);
+
+    const logs = parsed(cap.lines).filter((l) => l.event === "mcp_call");
+    assert.equal(logs.length, 2);
+    assert.match(String(logs[0].call_ref), /^c:[0-9a-f]{32}$/);
+    assert.equal(logs[0].call_ref_source, "meta");
+    assert.equal(logs[0].meta_keys, "telnyx_conversation_id,other_stuff");
+    assert.equal(logs[0].bad_fields, "phone,address");
+    assert.equal(logs[1].call_ref_source, "meta");
+    assert.equal(logs[1].meta_keys, "conversation_id");
+    const joined = cap.lines.join("\n");
+    for (const forbidden of ["conv-9z8y7x", "alt-conv-id", "shh", "model-sent-ref"]) {
+      assert.ok(!joined.includes(forbidden), `no _meta or argument values in the logs: ${forbidden}`);
+    }
   } finally {
     cap.restore();
   }

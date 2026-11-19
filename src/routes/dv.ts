@@ -11,10 +11,27 @@
 import { readConfig } from "../lib/config";
 import { callerHash, log, newRequestId, timed } from "../lib/log";
 import { verifyTelnyx } from "../lib/sig";
+import { spoken } from "../lib/validate";
 
 const BUSINESS_NAME = "Harbour Trades After-Hours";
-// TODO: replace with the real human escalation number, spoken in digit groups.
-const FALLBACK_NUMBER_SPOKEN = "zero four nine one, five seven zero, one five six";
+
+// Spoken escalation number: digits of the FALLBACK_NUMBER secret, spoken one
+// character at a time. Unset (or no digits) degrades to "the office" + a warn.
+function fallbackSpoken(raw: string | undefined): string | null {
+  if (raw === undefined) return null;
+  const digits = raw.replace(/[^0-9]/g, "");
+  return digits === "" ? null : spoken(digits);
+}
+
+// 12 random lowercase hex chars for a degraded call_ref ("u:" + hex), so two
+// degraded calls never share a reservation.
+function randomRef(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return "u:" + hex;
+}
 
 // The lookup may never take longer than this; Telnyx's webhook timeout is
 // 1.5 s and we still need time to hash and respond.
@@ -137,7 +154,17 @@ export async function handleDv(
   }
 
   const hold_ttl_s = readConfig(env, "DISPATCH_HOLD_TTL_S") ?? "90";
-  let call_ref = "unknown";
+  const fallback_number_spoken =
+    fallbackSpoken(readConfig(env, "FALLBACK_NUMBER")) ?? "the office";
+  if (fallback_number_spoken === "the office") {
+    log({
+      component: "dv",
+      event: "fallback_number_unset",
+      level: "warn",
+      request_id,
+    });
+  }
+  let call_ref = randomRef();
   let caller_hash: string | undefined;
 
   try {
@@ -234,7 +261,7 @@ export async function handleDv(
       customer_name: typeof record?.name === "string" ? record.name : "",
       customer_address: typeof record?.address === "string" ? record.address : "",
       dispatch_enabled,
-      fallback_number_spoken: FALLBACK_NUMBER_SPOKEN,
+      fallback_number_spoken,
       hold_ttl_s,
     };
 
@@ -269,7 +296,7 @@ export async function handleDv(
       customer_name: "",
       customer_address: "",
       dispatch_enabled: "true",
-      fallback_number_spoken: FALLBACK_NUMBER_SPOKEN,
+      fallback_number_spoken,
       hold_ttl_s,
     };
     log({

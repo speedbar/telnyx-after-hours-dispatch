@@ -24,9 +24,12 @@ const EXPECTED_KEYS = [
   "attempt",
   "technician_id",
   "job_id",
+  "bad_fields",
+  "meta_keys",
+  "call_ref_source",
 ];
 
-test("formatLine output parses as JSON with exactly the 15 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 18 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -43,11 +46,17 @@ test("formatLine output parses as JSON with exactly the 15 keys in order", () =>
       attempt: 2,
       technician_id: "tech-01",
       job_id: "JA47",
+      bad_fields: "phone,address",
+      meta_keys: "telnyx_conversation_id",
+      call_ref_source: "meta",
     },
     new Date("2026-11-18T00:00:00.000Z"),
   );
   const parsed = JSON.parse(line);
   assert.deepEqual(Object.keys(parsed), EXPECTED_KEYS);
+  assert.equal(parsed.bad_fields, "phone,address");
+  assert.equal(parsed.meta_keys, "telnyx_conversation_id");
+  assert.equal(parsed.call_ref_source, "meta");
 });
 
 test("minimal fields: level defaults to info, every other field is null", () => {

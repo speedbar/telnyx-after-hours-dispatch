@@ -385,7 +385,7 @@ test("9. valid signature but body is not JSON: 200 safe defaults + dv_degraded",
     const vars = await variablesOf(res);
     assert.equal(vars.dispatch_enabled, "true");
     assert.equal(vars.caller_known, "false");
-    assert.equal(vars.call_ref, "unknown");
+    assert.match(vars.call_ref, /^u:[0-9a-f]{12}$/);
     assert.ok(parsed(cap.lines).some((l) => l.event === "dv_degraded"));
   } finally {
     cap.restore();
@@ -505,5 +505,64 @@ test("12. lookup that never resolves: 200 safe defaults, lookup_timeout, within 
     assert.equal(dvLookup.error, "lookup_timeout");
   } finally {
     cap.restore();
+  }
+});
+
+test("13. FALLBACK_NUMBER set: fallback_number_spoken is the digits spoken in groups", async () => {
+  const { privateKey, publicKeyB64 } = await fixture;
+  const env = makeEnv(
+    publicKeyB64,
+    fakeDirectory({ flag: null, customer: null }),
+    { FALLBACK_NUMBER: "+61 (400) 111-222" },
+  );
+  const body = makeBody();
+  const ts = String(NOW_S);
+  const sig = await sign(privateKey, ts, body);
+  const cap = captureLog();
+  try {
+    const res = await handleDv(signedRequest(body, sig, ts), env, NOW_MS);
+    assert.equal(res.status, 200);
+    const vars = await variablesOf(res);
+    assert.equal(vars.fallback_number_spoken, "6 1 4 0 0 1 1 1 2 2 2");
+    assert.ok(
+      !parsed(cap.lines).some((l) => l.event === "fallback_number_unset"),
+      "no fallback_number_unset log line when the number is set",
+    );
+  } finally {
+    cap.restore();
+  }
+});
+
+test("14. FALLBACK_NUMBER unset: 'the office' + fallback_number_unset warn log line", async () => {
+  const { privateKey, publicKeyB64 } = await fixture;
+  const had = Object.prototype.hasOwnProperty.call(
+    process.env,
+    "FALLBACK_NUMBER",
+  );
+  const previous = process.env.FALLBACK_NUMBER;
+  delete process.env.FALLBACK_NUMBER;
+  const env = makeEnv(
+    publicKeyB64,
+    fakeDirectory({ flag: null, customer: null }),
+  );
+  const body = makeBody();
+  const ts = String(NOW_S);
+  const sig = await sign(privateKey, ts, body);
+  const cap = captureLog();
+  try {
+    const res = await handleDv(signedRequest(body, sig, ts), env, NOW_MS);
+    assert.equal(res.status, 200);
+    const vars = await variablesOf(res);
+    assert.equal(vars.fallback_number_spoken, "the office");
+    const unset = parsed(cap.lines).find(
+      (l) => l.event === "fallback_number_unset",
+    );
+    assert.ok(unset, "expected a fallback_number_unset log line");
+    assert.equal(unset.level, "warn");
+  } finally {
+    cap.restore();
+    if (had) {
+      process.env.FALLBACK_NUMBER = previous;
+    }
   }
 });

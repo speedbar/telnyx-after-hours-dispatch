@@ -22,6 +22,47 @@ export function isJobId(v: unknown): v is string {
   return typeof v === "string" && JOB_ID_RE.test(v);
 }
 
+// A safe call ref for actor names and logs: "c:" + 32 hex of the SHA-256 of
+// whatever identity string we got (conversation id, SIP address, model value).
+// Always satisfies CALL_REF_RE; a stable hash, never the raw value.
+async function safeCallRef(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  const hex = Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  return "c:" + hex.slice(0, 32);
+}
+
+export interface CallRefResolution {
+  ref: string | null;
+  source: "meta" | "args" | "none";
+}
+
+// Server-side call identity (S1.5): the model is never trusted to carry IDs.
+// Order: the conversation id from tools/call _meta, else args.call_ref
+// (non-empty string of at most 200 chars), else null. A mismatching model
+// value is ignored silently.
+export async function resolveCallRef(
+  args: unknown,
+  ctx: { meta_conversation_id?: string } | undefined,
+): Promise<CallRefResolution> {
+  const metaId = ctx?.meta_conversation_id;
+  if (typeof metaId === "string" && metaId !== "") {
+    return { ref: await safeCallRef(metaId), source: "meta" };
+  }
+  const v =
+    args !== null && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>).call_ref
+      : undefined;
+  if (typeof v === "string" && v !== "" && v.length <= 200) {
+    return { ref: await safeCallRef(v), source: "args" };
+  }
+  return { ref: null, source: "none" };
+}
+
 export function oneOf<T extends string>(v: unknown, list: readonly T[]): T | null {
   return typeof v === "string" && (list as readonly string[]).includes(v)
     ? (v as T)

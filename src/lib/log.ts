@@ -25,6 +25,9 @@ export interface LogFields {
   attempt?: number;
   technician_id?: string;
   job_id?: string;
+  bad_fields?: string; // comma-joined validation-failed field names, never values
+  meta_keys?: string; // comma-joined key names of tools/call _meta, names only
+  call_ref_source?: "meta" | "args" | "none";
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -34,7 +37,7 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
       : fields.error.length > 300
         ? fields.error.slice(0, 300)
         : fields.error;
-  // Key order below is part of the contract: exactly these 15 keys,
+  // Key order below is part of the contract: exactly these 18 keys,
   // in this order, with null for anything not supplied.
   return JSON.stringify({
     ts: now.toISOString(),
@@ -52,6 +55,9 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     attempt: fields.attempt ?? null,
     technician_id: fields.technician_id ?? null,
     job_id: fields.job_id ?? null,
+    bad_fields: fields.bad_fields ?? null,
+    meta_keys: fields.meta_keys ?? null,
+    call_ref_source: fields.call_ref_source ?? null,
   });
 }
 
