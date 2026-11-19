@@ -9,21 +9,25 @@ import { readConfig } from "../lib/config";
 import { ETA_MINUTES, TECH_NAMES, TECH_POOL } from "../lib/pool";
 import {
   cleanText,
-  isCallRef,
   jobIdFromCallRef,
+  normalisePhone,
   oneOf,
+  resolveCallRef,
 } from "../lib/validate";
-import type { ToolEnv, ToolResult } from "./index";
+import type { ToolCtx, ToolEnv, ToolResult } from "./index";
 
 const URGENCIES = ["emergency", "urgent"] as const;
 const TRADES = ["plumbing", "electrical", "gas", "hvac", "other"] as const;
 
 type FailReason = "invalid_input" | "disabled" | "already_closed" | "no_technician_available";
 
-const fail = (reason: FailReason): ToolResult => ({
+// Every failure is data: same shape, bad_fields names only (never values).
+const fail = (reason: FailReason, bad_fields: string[] = []): ToolResult => ({
   ok: false,
   reason,
   next: "fallback",
+  retry: false,
+  bad_fields,
 });
 
 function holdTtl(env: ToolEnv): number {
@@ -62,6 +66,7 @@ function mapOpenReason(reason: string): FailReason {
 export async function handleReserveTechnician(
   args: unknown,
   env: ToolEnv,
+  ctx: ToolCtx,
 ): Promise<ToolResult> {
   const dir = env.DIRECTORY;
   const tech = env.TECH;
@@ -70,19 +75,36 @@ export async function handleReserveTechnician(
     throw new Error("namespace_missing");
   }
   const a = (args ?? {}) as Record<string, unknown>;
-  const call_ref = isCallRef(a.call_ref) ? a.call_ref : null;
+  const call_ref = (await resolveCallRef(a, ctx)).ref;
   const urgency = oneOf(a.urgency, URGENCIES);
   const trade = oneOf(a.trade, TRADES);
   const suburb = cleanText(a.suburb, 60);
   const summary = cleanText(a.summary, 200);
+  // Caller details are required so the model cannot reserve before it has
+  // asked for them (BUG-006). Validate only; not stored in this task.
+  const customer_name = cleanText(a.customer_name, 80);
+  const address = cleanText(a.address, 200);
+  const callback_number = normalisePhone(a.callback_number);
   if (
     call_ref === null ||
     urgency === null ||
     trade === null ||
     suburb === null ||
-    summary === null
+    summary === null ||
+    customer_name === null ||
+    address === null ||
+    callback_number === null
   ) {
-    return fail("invalid_input");
+    const bad_fields: string[] = [];
+    if (call_ref === null) bad_fields.push("call_ref");
+    if (customer_name === null) bad_fields.push("customer_name");
+    if (address === null) bad_fields.push("address");
+    if (callback_number === null) bad_fields.push("callback_number");
+    if (urgency === null) bad_fields.push("urgency");
+    if (trade === null) bad_fields.push("trade");
+    if (suburb === null) bad_fields.push("suburb");
+    if (summary === null) bad_fields.push("summary");
+    return fail("invalid_input", bad_fields);
   }
 
   const job_id = await jobIdFromCallRef(call_ref);

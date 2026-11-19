@@ -100,10 +100,22 @@ function handler(name: string) {
 
 const validReserve = (call_ref: string) => ({
   call_ref,
+  customer_name: "Sam Rivera",
+  address: "12 Banksia Street",
+  callback_number: "0412 000 001",
   urgency: "emergency",
   trade: "plumbing",
   suburb: "Fitzroy",
   summary: "Burst pipe under the house",
+});
+
+// Uniform failure shape of S1.5: data, never thrown; bad_fields names only.
+const fail = (reason: string, bad_fields: string[] = []) => ({
+  ok: false,
+  reason,
+  next: "fallback",
+  retry: false,
+  bad_fields,
 });
 
 const logLines: string[] = [];
@@ -132,10 +144,7 @@ test("lookup_customer: known, unknown, bad phone, garbage record", async () => {
     ok: true,
     found: false,
   });
-  assert.deepEqual(await lookup({ phone: "abc" }, env), {
-    ok: false,
-    reason: "invalid_input",
-  });
+  assert.deepEqual(await lookup({ phone: "abc" }, env), fail("invalid_input", ["phone"]));
   assert.deepEqual(await lookup({ phone: "+61499999999" }, env), {
     ok: true,
     found: false,
@@ -165,17 +174,44 @@ test("reserve_technician: pool order, replay idempotency, exhaustion", async () 
   assert.equal(r2.attempt, 2);
 
   const r3 = await reserve(validReserve("call-003"), env);
-  assert.deepEqual(r3, {
-    ok: false,
-    reason: "no_technician_available",
-    next: "fallback",
-  });
+  assert.deepEqual(r3, fail("no_technician_available"));
 });
 
 test("reserve_technician: flag false -> disabled", async () => {
   const env = await seeded("false");
   const r = await handler("reserve_technician")(validReserve("call-009"), env);
-  assert.deepEqual(r, { ok: false, reason: "disabled", next: "fallback" });
+  assert.deepEqual(r, fail("disabled"));
+});
+
+test("reserve_technician: caller details required, SIP callback rejected, any call_ref string accepted", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  // Missing the caller details: cannot reserve before asking (BUG-006).
+  const missing = await reserve(
+    { call_ref: "call-100", urgency: "emergency", trade: "plumbing", suburb: "Fitzroy", summary: "Burst pipe" },
+    env,
+  );
+  assert.deepEqual(missing, fail("invalid_input", ["customer_name", "address", "callback_number"]));
+  // A SIP address as callback_number fails normalisePhone.
+  assert.deepEqual(
+    await reserve({ ...validReserve("call-101"), callback_number: "xxxx@sip.telnyx.com.au" }, env),
+    fail("invalid_input", ["callback_number"]),
+  );
+  // A SIP address as call_ref is fine now: hashed to a c: ref (BUG-009).
+  const r = (await reserve(validReserve("xxxx@sip.telnyx.com.au"), env)) as ToolResult;
+  assert.equal(r.ok, true);
+});
+
+test("reserve_technician: meta conversation id wins; replay with a different model call_ref is idempotent", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const ctx = { meta_conversation_id: "conv-meta-1" };
+  const r1 = (await reserve(validReserve("first-model-ref"), env, ctx)) as ToolResult;
+  assert.equal(r1.ok, true);
+  const r2 = (await reserve(validReserve("second-model-ref"), env, ctx)) as ToolResult;
+  assert.equal(r2.ok, true);
+  assert.equal(r2.job_id, r1.job_id);
+  assert.equal(r2.technician_id, r1.technician_id);
 });
 
 test("create_job before reserve -> no_active_reservation", async () => {
@@ -183,26 +219,25 @@ test("create_job before reserve -> no_active_reservation", async () => {
   const r = await handler("create_job")(
     {
       call_ref: "call-404",
-      job_id: "JA1B2C",
       customer_name: "Sam Rivera",
       address: "12 Banksia Street",
       details: "Burst pipe",
     },
     env,
   );
-  assert.deepEqual(r, { ok: false, reason: "no_active_reservation" });
+  assert.deepEqual(r, fail("no_active_reservation"));
 });
 
-test("create_job: happy path, replay, wrong job_id", async () => {
+test("create_job: happy path without job_id, replay, invented job_id ignored", async () => {
   const env = await seeded();
   const reserve = handler("reserve_technician");
   const create = handler("create_job");
   const r1 = (await reserve(validReserve("call-010"), env)) as ToolResult;
   const job_id = r1.job_id as string;
 
+  // No job_id from the model: the server reads it from the JobActor (BUG-007).
   const good = {
     call_ref: "call-010",
-    job_id,
     customer_name: "Sam Rivera",
     address: "12 Banksia Street",
     contact_phone: "0412 000 001",
@@ -218,48 +253,64 @@ test("create_job: happy path, replay, wrong job_id", async () => {
   const c2 = await create(good, env);
   assert.deepEqual(c2, c1);
 
-  const wrong = await create({ ...good, job_id: "JA0Z9Y" }, env);
-  assert.deepEqual(wrong, { ok: false, reason: "no_active_reservation" });
+  // An invented model job_id is ignored silently.
+  const invented = await create({ ...good, job_id: "JA0Z9Y" }, env);
+  assert.deepEqual(invented, c1);
 });
 
 test("create_job after the hold expired -> hold_expired", async () => {
   const env = await seeded();
   (env as Record<string, unknown>).DISPATCH_HOLD_TTL_S = "1";
-  const r1 = (await handler("reserve_technician")(validReserve("call-020"), env)) as ToolResult;
+  await handler("reserve_technician")(validReserve("call-020"), env);
   await new Promise((r) => setTimeout(r, 1100));
   const r = await handler("create_job")(
     {
       call_ref: "call-020",
-      job_id: r1.job_id,
       customer_name: "Sam Rivera",
       address: "12 Banksia Street",
       details: "Burst pipe",
     },
     env,
   );
-  assert.deepEqual(r, { ok: false, reason: "hold_expired", next: "fallback" });
+  assert.deepEqual(r, fail("hold_expired"));
 });
 
-test("release_technician: release true then false, availability", async () => {
+test("create_job: blank optional fields count as not provided; non-empty invalid still fails", async () => {
+  const env = await seeded();
+  const create = handler("create_job");
+  const r = (await handler("reserve_technician")(validReserve("call-060"), env)) as ToolResult;
+  const job_id = r.job_id as string;
+  const base = {
+    call_ref: "call-060",
+    customer_name: "Sam Rivera",
+    address: "12 Banksia Street",
+    details: "Burst pipe",
+  };
+  const good = { ok: true, job_id, reference_spoken: job_id.split("").join(" ") };
+  assert.deepEqual(await create({ ...base, hazards: "" }, env), good);
+  assert.deepEqual(await create({ ...base, hazards: "   " }, env), good);
+  assert.deepEqual(await create({ ...base, contact_phone: "" }, env), good);
+  const bad = await create({ ...base, contact_phone: "abc" }, env);
+  assert.deepEqual(bad, fail("invalid_input", ["contact_phone"]));
+});
+
+test("release_technician: works without job_id; replay and unknown call are no_active_reservation", async () => {
   const env = await seeded();
   const reserve = handler("reserve_technician");
   const release = handler("release_technician");
   await reserve(validReserve("call-030"), env);
-  const r2 = (await reserve(validReserve("call-031"), env)) as ToolResult;
+  await reserve(validReserve("call-031"), env);
 
-  // Unknown job while both techs held: released false, none available.
+  // Unknown call (model never reserved): no_active_reservation, still data.
   const unknown = await release(
-    { call_ref: "call-zzz", job_id: "JA9Z8Y", reason: "declined" },
+    { call_ref: "call-zzz", reason: "declined" },
     env,
   );
-  assert.deepEqual(unknown, {
-    ok: true,
-    released: false,
-    next_technician_available: false,
-  });
+  assert.deepEqual(unknown, fail("no_active_reservation"));
 
+  // No job_id needed: the JobActor record is the truth.
   const first = await release(
-    { call_ref: "call-031", job_id: r2.job_id, reason: "no_answer" },
+    { call_ref: "call-031", reason: "no_answer" },
     env,
   );
   assert.deepEqual(first, {
@@ -268,65 +319,62 @@ test("release_technician: release true then false, availability", async () => {
     next_technician_available: true,
   });
 
-  // Replay: released false, still safe.
+  // Replay of a closed job: no_active_reservation with next:"fallback".
   const replay = await release(
-    { call_ref: "call-031", job_id: r2.job_id, reason: "no_answer" },
+    { call_ref: "call-031", reason: "no_answer" },
     env,
   );
-  assert.deepEqual(replay, {
-    ok: true,
-    released: false,
-    next_technician_available: true,
-  });
+  assert.deepEqual(replay, fail("no_active_reservation"));
 });
 
 test("invalid_input for every tool", async () => {
   const env = await seeded();
-  assert.deepEqual(await handler("lookup_customer")({ phone: "abc" }, env), {
-    ok: false,
-    reason: "invalid_input",
-  });
+  assert.deepEqual(
+    await handler("lookup_customer")({ phone: "abc" }, env),
+    fail("invalid_input", ["phone"]),
+  );
   const reserve = handler("reserve_technician");
-  for (const args of [
-    { ...validReserve("call-050"), suburb: "x".repeat(61) },
-    { ...validReserve("call-050"), urgency: "low" },
-    { ...validReserve("has a space") },
-    { ...validReserve("call-050"), summary: "\u0007" },
-  ]) {
-    assert.deepEqual(await reserve(args, env), {
-      ok: false,
-      reason: "invalid_input",
-      next: "fallback",
-    });
+  for (const [args, fields] of [
+    [{ ...validReserve("call-050"), suburb: "x".repeat(61) }, ["suburb"]],
+    [{ ...validReserve("call-050"), urgency: "low" }, ["urgency"]],
+    [{ ...validReserve("call-050"), summary: "\u0007" }, ["summary"]],
+  ] as const) {
+    assert.deepEqual(await reserve(args, env), fail("invalid_input", fields));
   }
+  // A call_ref that is empty or too long (and no _meta id) cannot resolve.
+  assert.deepEqual(
+    await reserve(validReserve("x".repeat(201)), env),
+    fail("invalid_input", ["call_ref"]),
+  );
   const create = handler("create_job");
-  for (const args of [
-    {
-      call_ref: "call-051",
-      job_id: "JA1B2C",
-      customer_name: "x".repeat(81),
-      address: "a",
-      details: "d",
-    },
-    {
-      call_ref: "call-051",
-      job_id: "JA1B2C",
-      customer_name: "n",
-      address: "a",
-      details: "\u0001\u0002",
-    },
-  ]) {
-    assert.deepEqual(await create(args, env), {
-      ok: false,
-      reason: "invalid_input",
-    });
+  for (const [args, fields] of [
+    [
+      {
+        call_ref: "call-051",
+        customer_name: "x".repeat(81),
+        address: "a",
+        details: "d",
+      },
+      ["customer_name"],
+    ],
+    [
+      {
+        call_ref: "call-051",
+        customer_name: "n",
+        address: "a",
+        details: "\u0001\u0002",
+      },
+      ["details"],
+    ],
+  ] as const) {
+    assert.deepEqual(await create(args, env), fail("invalid_input", fields));
   }
   assert.deepEqual(
     await handler("release_technician")(
-      { call_ref: "call-052", job_id: "JA1B2C", reason: "bored" },
+      { call_ref: "call-052", reason: "bored" },
       env,
     ),
-    { ok: false, reason: "invalid_input" },
+    fail("invalid_input", ["reason"]),
   );
 });
 

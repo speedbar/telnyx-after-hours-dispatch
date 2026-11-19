@@ -46,3 +46,9 @@ Date: 18 Nov 2026, 3:30 am Sydney. `tsc --noEmit` exit 0; scrub clean; no consol
 
 ### V-014 S1.3b live checks (TechnicianActor via /admin/tech)
 Date: 18 Nov 2026, 12:45 pm Sydney. Shipped S1.3b and ran the checks against the live function. Concurrency script: six parallel reserves on tech-01 gave `ok=1 busy=5 other=0`; the winner's release returned `{"released":true}`; status was available. Hold expiry: tech-02 reserved with ttl_s 5, status after 8 s was `available` with no held_for (the alarm cleared the hold). Timed status call: 0.18 s total from the laptop. This confirms the V-012 reading of the actor serialization guarantee for this workload. Status: OBSERVED live.
+
+### V-015 /mcp live smoke test and reserve latency
+Date: 18 Nov 2026, 1:46 pm Sydney. Shipped S1.4c. With the bearer token: tools/list returns the four tools with schemas (0.09 s); reserve_technician smoke-1 returned job JAEEC6, tech-01 Jordan, eta 30, attempt 1 (matches the predicted deterministic id); release_technician returned released true, next_technician_available true (0.13 s). Latency: reserve 1.44, 1.12, 2.60 s on fresh call refs smoke-1..3; 1.08, 1.03, 1.20 s on lat-1..3; replay of an existing call ref 0.28 s. Not yet checked: the server-side latency_ms in the log, a no-token 401 call. Status: OBSERVED live; latency is BUG-005.
+
+### V-016 Which _meta key names does Telnyx send on tools/call?
+Date: 18 Nov 2026. Test: MCP `_meta` key names Telnyx sends on tools/call. PENDING a live call; read them from the `mcp_call.meta_keys` log field after the next live test. The server looks for `_meta.telnyx_conversation_id` then `_meta.conversation_id` (guessed names, UNVERIFIED). If meta_keys is empty after a live call, record that `args.call_ref` is the only identity source. Status: OPEN.

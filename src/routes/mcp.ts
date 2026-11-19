@@ -7,9 +7,10 @@
 
 import { readConfig } from "../lib/config";
 import { log, newRequestId, timed, type LogFields } from "../lib/log";
-import { isCallRef } from "../lib/validate";
+import { resolveCallRef } from "../lib/validate";
 import {
   TOOLS,
+  type ToolCtx,
   type ToolDefinition,
   type ToolEnv,
   type ToolResult,
@@ -154,10 +155,33 @@ async function handleToolCall(
   }
   const args = params.arguments === undefined ? {} : params.arguments;
 
+  // Server-side call identity: the conversation id comes from _meta (key name
+  // VERIFY, see docs/verify-log.md V-016), never from the model. Only key
+  // names of _meta are logged, never values.
+  const meta =
+    params._meta !== null &&
+    typeof params._meta === "object" &&
+    !Array.isArray(params._meta)
+      ? (params._meta as Record<string, unknown>)
+      : undefined;
+  const ctx: ToolCtx = {};
+  if (meta !== undefined) {
+    const telnyxId = meta.telnyx_conversation_id;
+    const altId = meta.conversation_id;
+    if (typeof telnyxId === "string" && telnyxId !== "") {
+      ctx.meta_conversation_id = telnyxId;
+    } else if (typeof altId === "string" && altId !== "") {
+      ctx.meta_conversation_id = altId;
+    }
+  }
+  // Resolved once here for the log line; handlers resolve the same value
+  // (deterministic hash). The safe "c:" ref is logged even for rejected calls.
+  const resolved = await resolveCallRef(args, ctx);
+
   const { result: run, latency_ms } = await timed(
     async (): Promise<RunOutcome> => {
       try {
-        return { threw: false, output: await tool.handler(args, env) };
+        return { threw: false, output: await tool.handler(args, env, ctx) };
       } catch (err) {
         return { threw: true, errName: err instanceof Error ? err.name : "unknown" };
       }
@@ -170,14 +194,10 @@ async function handleToolCall(
     tool: tool.name,
     request_id,
     latency_ms,
+    call_ref: resolved.ref ?? undefined,
+    call_ref_source: resolved.source,
+    meta_keys: meta === undefined ? undefined : Object.keys(meta).join(","),
   };
-  // call_ref is the only argument piece that may be logged (charset-checked).
-  if (args !== null && typeof args === "object" && !Array.isArray(args)) {
-    const callRef = (args as Record<string, unknown>).call_ref;
-    if (isCallRef(callRef)) {
-      fields.call_ref = callRef;
-    }
-  }
 
   if (run.threw) {
     fields.outcome = "fail";
@@ -198,6 +218,12 @@ async function handleToolCall(
   fields.outcome = output.ok ? "ok" : "rejected";
   if (!output.ok && typeof output.reason === "string") {
     fields.error = output.reason;
+  }
+  if (
+    Array.isArray(output.bad_fields) &&
+    output.bad_fields.every((f) => typeof f === "string")
+  ) {
+    fields.bad_fields = (output.bad_fields as string[]).join(",");
   }
   if (typeof output.job_id === "string") {
     fields.job_id = output.job_id;

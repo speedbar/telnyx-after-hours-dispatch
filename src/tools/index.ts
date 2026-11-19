@@ -71,7 +71,17 @@ export interface ToolEnv {
   [key: string]: unknown;
 }
 
-export type ToolHandler = (args: unknown, env: ToolEnv) => Promise<ToolResult>;
+// Per-call context resolved by the MCP route from tools/call _meta. The
+// conversation id (if Telnyx sends one) outranks any model-sent call_ref.
+export interface ToolCtx {
+  meta_conversation_id?: string;
+}
+
+export type ToolHandler = (
+  args: unknown,
+  env: ToolEnv,
+  ctx: ToolCtx,
+) => Promise<ToolResult>;
 
 export interface ToolDefinition {
   name: string;
@@ -79,6 +89,13 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
   handler: ToolHandler;
 }
+
+const CALL_REF_PROP = {
+  type: "string",
+  maxLength: 200,
+  description:
+    "Use the call_ref value from your instructions. It is never a phone number or SIP address. Optional; the server can identify the call itself.",
+} as const;
 
 export const TOOLS: ToolDefinition[] = [
   {
@@ -88,7 +105,11 @@ export const TOOLS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        phone: { type: "string", maxLength: 32 },
+        phone: {
+          type: "string",
+          maxLength: 32,
+          description: "The caller's phone number, in any common format.",
+        },
       },
       required: ["phone"],
       additionalProperties: false,
@@ -98,20 +119,57 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: "reserve_technician",
     description:
-      "Reserve an on-call technician for this emergency call. Call this as soon as the problem is classified; it places a short hold so the same technician cannot be given to another caller.",
+      "Reserve an on-call technician. Call this once, only after you have confirmed the caller's name, address and callback number and know the urgency, trade and suburb. Do not call it earlier. If it fails, do not retry.",
     inputSchema: {
       type: "object",
       properties: {
-        call_ref: { type: "string", maxLength: 128 },
-        urgency: { type: "string", enum: ["emergency", "urgent"] },
+        call_ref: CALL_REF_PROP,
+        customer_name: {
+          type: "string",
+          maxLength: 80,
+          description: "The caller's name, as they confirmed it.",
+        },
+        address: {
+          type: "string",
+          maxLength: 200,
+          description: "The service address, as the caller confirmed it.",
+        },
+        callback_number: {
+          type: "string",
+          maxLength: 32,
+          description:
+            "The best phone number to reach the caller on. Never a SIP address.",
+        },
+        urgency: {
+          type: "string",
+          enum: ["emergency", "urgent"],
+          description: "emergency if someone or property is at risk now, else urgent.",
+        },
         trade: {
           type: "string",
           enum: ["plumbing", "electrical", "gas", "hvac", "other"],
+          description: "The trade the job needs.",
         },
-        suburb: { type: "string", maxLength: 60 },
-        summary: { type: "string", maxLength: 200 },
+        suburb: {
+          type: "string",
+          maxLength: 60,
+          description: "The suburb of the job.",
+        },
+        summary: {
+          type: "string",
+          maxLength: 200,
+          description: "One short sentence describing the caller's problem.",
+        },
       },
-      required: ["call_ref", "urgency", "trade", "suburb", "summary"],
+      required: [
+        "customer_name",
+        "address",
+        "callback_number",
+        "urgency",
+        "trade",
+        "suburb",
+        "summary",
+      ],
       additionalProperties: false,
     },
     handler: handleReserveTechnician,
@@ -119,19 +177,44 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: "create_job",
     description:
-      "Save the caller's details onto the reserved job and get a spoken job reference. Call this after a technician is reserved and the caller has confirmed their details.",
+      "Record the caller's details for the technician. Call once, only after reserve_technician succeeded. Do not retry if it fails.",
     inputSchema: {
       type: "object",
       properties: {
-        call_ref: { type: "string", maxLength: 128 },
-        job_id: { type: "string", maxLength: 6 },
-        customer_name: { type: "string", maxLength: 80 },
-        address: { type: "string", maxLength: 200 },
-        contact_phone: { type: "string", maxLength: 32 },
-        details: { type: "string", maxLength: 500 },
-        hazards: { type: "string", maxLength: 200 },
+        call_ref: CALL_REF_PROP,
+        job_id: {
+          type: "string",
+          maxLength: 6,
+          description:
+            "Optional. The server knows the job from the call; do not invent one.",
+        },
+        customer_name: {
+          type: "string",
+          maxLength: 80,
+          description: "The caller's name, as they confirmed it.",
+        },
+        address: {
+          type: "string",
+          maxLength: 200,
+          description: "The service address, as the caller confirmed it.",
+        },
+        contact_phone: {
+          type: "string",
+          maxLength: 32,
+          description: "Optional callback phone number for the caller.",
+        },
+        details: {
+          type: "string",
+          maxLength: 500,
+          description: "What the caller told you about the problem.",
+        },
+        hazards: {
+          type: "string",
+          maxLength: 200,
+          description: "Optional hazards the technician should know about.",
+        },
       },
-      required: ["call_ref", "job_id", "customer_name", "address", "details"],
+      required: ["customer_name", "address", "details"],
       additionalProperties: false,
     },
     handler: handleCreateJob,
@@ -139,18 +222,24 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: "release_technician",
     description:
-      "Cancel the technician hold for this call, for example when the technician declines or does not answer. Safe to call more than once.",
+      "Release a reserved technician when the call cannot proceed. Call only if a technician was reserved. Use one reason from the list. Do not retry.",
     inputSchema: {
       type: "object",
       properties: {
-        call_ref: { type: "string", maxLength: 128 },
-        job_id: { type: "string", maxLength: 6 },
+        call_ref: CALL_REF_PROP,
+        job_id: {
+          type: "string",
+          maxLength: 6,
+          description:
+            "Optional. The server knows the job from the call; do not invent one.",
+        },
         reason: {
           type: "string",
           enum: ["declined", "no_answer", "caller_hung_up", "error"],
+          description: "Why the reservation cannot proceed.",
         },
       },
-      required: ["call_ref", "job_id", "reason"],
+      required: ["reason"],
       additionalProperties: false,
     },
     handler: handleReleaseTechnician,

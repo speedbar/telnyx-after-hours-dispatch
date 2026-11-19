@@ -8,6 +8,7 @@ import {
   jobIdFromCallRef,
   normalisePhone,
   oneOf,
+  resolveCallRef,
   spoken,
 } from "../src/lib/validate.js";
 
@@ -61,4 +62,46 @@ test("jobIdFromCallRef is deterministic and matches isJobId", async () => {
 
 test("spoken spaces every character", () => {
   assert.equal(spoken("JA2B3C"), "J A 2 B 3 C");
+});
+
+test("resolveCallRef: meta wins, SIP address becomes a c: ref, empties null, deterministic", async () => {
+  const RE = /^c:[0-9a-f]{32}$/;
+  // A SIP address or v3: string is accepted from args and hashed.
+  const fromArgs = await resolveCallRef(
+    { call_ref: "xxxx@sip.telnyx.com.au" },
+    {},
+  );
+  assert.equal(fromArgs.source, "args");
+  assert.match(fromArgs.ref as string, RE);
+  // The _meta conversation id always wins over a model-sent value.
+  const fromMeta = await resolveCallRef(
+    { call_ref: "model-sent-value" },
+    { meta_conversation_id: "conv-1" },
+  );
+  assert.equal(fromMeta.source, "meta");
+  assert.match(fromMeta.ref as string, RE);
+  assert.notEqual(fromMeta.ref, fromArgs.ref);
+  // Empty meta falls back to args; same input gives the same ref.
+  const emptyMeta = await resolveCallRef(
+    { call_ref: "same-input" },
+    { meta_conversation_id: "" },
+  );
+  assert.equal(emptyMeta.source, "args");
+  assert.equal(
+    emptyMeta.ref,
+    (await resolveCallRef({ call_ref: "same-input" }, {})).ref,
+  );
+  // Nothing usable -> null.
+  for (const [args, ctx] of [
+    [{}, {}],
+    [{ call_ref: "" }, {}],
+    [{ call_ref: "x".repeat(201) }, {}],
+    [{ call_ref: 42 }, {}],
+    [null, {}],
+  ] as const) {
+    assert.deepEqual(await resolveCallRef(args, ctx), {
+      ref: null,
+      source: "none",
+    });
+  }
 });

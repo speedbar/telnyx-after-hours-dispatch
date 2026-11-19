@@ -10,3 +10,7 @@ Date-stamped: what worked, what did not, workaround.
 - 17 Nov 2026: `telnyx-edge storage kv create` reported a client-side timeout, but the namespace was created (see V-003). The CLI gives no hint that the request may have succeeded; run `telnyx-edge storage kv list` before retrying.
 - 17 Nov 2026: the KV key character rule (a-z A-Z 0-9 - _ / = . only) is not stated where we looked (storage KV doc); we found it from an HTTP 400 on a deployed function. A one-line rule in the KV doc would have saved a design change.
 - 17 Nov 2026: `telnyx-edge deployments`, `rollback`, `revisions`, `inspect` and `log-export` exist in v0.5.18 but our docs notes did not mention them. Worth trying `telnyx-edge deployments dispatch` the next time a ship fails.
+- 18 Nov 2026: MCP tools are assistant-level in the Portal, not per workflow node. Prompts cannot scope them; the server must enforce order.
+- 18 Nov 2026: the dynamic-variables webhook URL and timeout can only be set through the API (PATCH /v2/ai/assistants/{id}), not in the Portal.
+- 18 Nov 2026: the Portal Test assistant is a web call; the caller "number" is a SIP address, so use a typed callback number in tests.
+- 18 Nov 2026: a negative balance (-$0.43) disabled the account and blocked inference. OpenCode showed error 10039 (monthly inference limit), then 20015 "Feature not enabled: User account is not enabled for inference". The public error pages describe these only generically. Two promo codes were rejected. Raised with the Telnyx team; awaiting a reply.

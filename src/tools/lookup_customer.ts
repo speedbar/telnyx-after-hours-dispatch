@@ -4,16 +4,25 @@
 // unusable in the record -> found:false. Business failures as data.
 
 import { cleanText, normalisePhone } from "../lib/validate";
-import type { ToolEnv, ToolResult } from "./index";
+import type { ToolCtx, ToolEnv, ToolResult } from "./index";
 
 export async function handleLookupCustomer(
   args: unknown,
   env: ToolEnv,
+  _ctx: ToolCtx,
 ): Promise<ToolResult> {
   const dir = env.DIRECTORY;
   if (dir === undefined) throw new Error("directory_namespace_missing");
   const digits = normalisePhone((args as Record<string, unknown> | null)?.phone);
-  if (digits === null) return { ok: false, reason: "invalid_input" };
+  if (digits === null) {
+    return {
+      ok: false,
+      reason: "invalid_input",
+      next: "fallback",
+      retry: false,
+      bad_fields: ["phone"],
+    };
+  }
 
   const res = await dir
     .idFromName("directory")

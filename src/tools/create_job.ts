@@ -6,16 +6,27 @@
 
 import {
   cleanText,
-  isCallRef,
-  isJobId,
   normalisePhone,
+  resolveCallRef,
   spoken,
 } from "../lib/validate";
-import type { ToolEnv, ToolResult } from "./index";
+import type { ToolCtx, ToolEnv, ToolResult } from "./index";
+
+type FailReason = "invalid_input" | "no_active_reservation" | "hold_expired";
+
+// Every failure is data: same shape, bad_fields names only (never values).
+const fail = (reason: FailReason, bad_fields: string[] = []): ToolResult => ({
+  ok: false,
+  reason,
+  next: "fallback",
+  retry: false,
+  bad_fields,
+});
 
 export async function handleCreateJob(
   args: unknown,
   env: ToolEnv,
+  ctx: ToolCtx,
 ): Promise<ToolResult> {
   const tech = env.TECH;
   const jobs = env.JOBS;
@@ -23,32 +34,46 @@ export async function handleCreateJob(
     throw new Error("namespace_missing");
   }
   const a = (args ?? {}) as Record<string, unknown>;
-  const call_ref = isCallRef(a.call_ref) ? a.call_ref : null;
-  const job_id = isJobId(a.job_id) ? a.job_id : null;
+  const call_ref = (await resolveCallRef(a, ctx)).ref;
+  // job_id from the model is ignored: the JobActor record is the truth (BUG-007).
   const customer_name = cleanText(a.customer_name, 80);
   const address = cleanText(a.address, 200);
   const details = cleanText(a.details, 500);
+  // Blank optional strings ("", whitespace-only) count as "not provided".
+  const blank = (v: unknown): boolean =>
+    typeof v === "string" && v.trim() === "";
   const hazards =
-    a.hazards === undefined ? undefined : cleanText(a.hazards, 200);
+    a.hazards === undefined || blank(a.hazards)
+      ? undefined
+      : cleanText(a.hazards, 200);
   const contact_phone =
-    a.contact_phone === undefined ? undefined : normalisePhone(a.contact_phone);
+    a.contact_phone === undefined || blank(a.contact_phone)
+      ? undefined
+      : normalisePhone(a.contact_phone);
   if (
     call_ref === null ||
-    job_id === null ||
     customer_name === null ||
     address === null ||
     details === null ||
     hazards === null ||
     contact_phone === null
   ) {
-    return { ok: false, reason: "invalid_input" };
+    const bad_fields: string[] = [];
+    if (call_ref === null) bad_fields.push("call_ref");
+    if (customer_name === null) bad_fields.push("customer_name");
+    if (address === null) bad_fields.push("address");
+    if (contact_phone === null) bad_fields.push("contact_phone");
+    if (details === null) bad_fields.push("details");
+    if (hazards === null) bad_fields.push("hazards");
+    return fail("invalid_input", bad_fields);
   }
 
   const jobsStub = jobs.idFromName(call_ref);
   const job = await jobsStub.get();
-  if (job === null || job.job_id !== job_id || job.state === "released") {
-    return { ok: false, reason: "no_active_reservation" };
+  if (job === null || job.state === "released") {
+    return fail("no_active_reservation");
   }
+  const job_id = job.job_id;
   if (job.state === "reserved") {
     const s = await tech.idFromName(job.tech_id).status();
     const h = s.held_for;
@@ -58,7 +83,7 @@ export async function handleCreateJob(
       h.job_id !== job_id ||
       h.expires_at <= Date.now()
     ) {
-      return { ok: false, reason: "hold_expired", next: "fallback" };
+      return fail("hold_expired");
     }
   }
 
@@ -70,6 +95,8 @@ export async function handleCreateJob(
     details,
     ...(hazards === undefined ? {} : { hazards }),
   });
-  if (!briefed.ok) return { ok: false, reason: briefed.reason };
+  if (!briefed.ok) {
+    return fail(briefed.reason === "invalid_input" ? "invalid_input" : "no_active_reservation");
+  }
   return { ok: true, job_id, reference_spoken: spoken(job_id) };
 }
