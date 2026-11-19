@@ -22,6 +22,11 @@ import {
   formatCallEvidence,
   callRefRejected,
   NO_CALL_REF_NOTE,
+  extractQuestion,
+  pickCallerRoute,
+  routeSay,
+  type CallerRoute,
+  type CallerScript,
   type FetchLike,
   type FetchInit,
   type RunnerConfig,
@@ -737,6 +742,186 @@ test("aggregateRuns: a scenario passes only if every repeat passes", () => {
     verdict: "ERROR",
   });
   assert.deepEqual(aggregateRuns(["ERROR", "ERROR"]), { passed: 0, verdict: "ERROR" });
+});
+
+// ---- routed caller (T1.0d) ----
+
+const callerDoc = (overrides: Record<string, unknown> = {}) => ({
+  id: "c",
+  golden_id: null,
+  caller: {
+    opening: "hi",
+    routes: [{ when: ["safe"], say: ["we are safe"] }],
+    unmatched: "say again?",
+    max_turns: 5,
+  },
+  assertions: {},
+  ...overrides,
+});
+
+test("parseScenarios: caller parses; both/neither/bad routes rejected", () => {
+  const good = parseScenarios({ scenarios: [callerDoc()] });
+  assert.equal(good[0].caller?.opening, "hi");
+  assert.equal(good[0].turns, undefined);
+  // Both fields, and neither field, are rejected.
+  assert.throws(() => parseScenarios({ scenarios: [callerDoc({ turns: ["x"] })] }));
+  assert.throws(() =>
+    parseScenarios({ scenarios: [{ id: "c", golden_id: null, assertions: {} }] }),
+  );
+  // A route without a non-empty when or say is rejected.
+  assert.throws(() =>
+    parseScenarios({
+      scenarios: [
+        callerDoc({
+          caller: { opening: "hi", routes: [{ when: [], say: ["a"] }], unmatched: "u", max_turns: 5 },
+        }),
+      ],
+    }),
+  );
+  assert.throws(() =>
+    parseScenarios({
+      scenarios: [
+        callerDoc({
+          caller: { opening: "hi", routes: [{ when: ["a"], say: [] }], unmatched: "u", max_turns: 5 },
+        }),
+      ],
+    }),
+  );
+});
+
+test("extractQuestion: last question wins; no question returns the whole reply", () => {
+  assert.equal(extractQuestion("You are safe, right? Is that correct?"), "Is that correct?");
+  assert.equal(extractQuestion("No question here."), "No question here.");
+  assert.equal(extractQuestion("Is anyone hurt?"), "Is anyone hurt?");
+});
+
+test("pickCallerRoute: file order, when_not, and scope reply", () => {
+  const inOrder: CallerRoute[] = [
+    { when: ["address"], say: ["a"] },
+    { when: ["address", "king"], say: ["b"] },
+  ];
+  assert.equal(pickCallerRoute(inOrder, "Is that address right?"), 0);
+  const neg: CallerRoute[] = [{ when: ["king"], when_not: ["eleven"], say: ["x"] }];
+  assert.equal(pickCallerRoute(neg, "Is Eleven King Street right?"), -1);
+  assert.equal(pickCallerRoute(neg, "Is Leven King Street right?"), 0);
+  // Without scope the keyword lives outside the question; scope reply sees it.
+  const reply = "You said Leven King Street. Is that right?";
+  assert.equal(pickCallerRoute([{ when: ["leven king"], say: ["x"] }], reply), -1);
+  assert.equal(pickCallerRoute([{ when: ["leven king"], scope: "reply", say: ["x"] }], reply), 0);
+});
+
+test("routeSay: nth fire uses the nth entry; the last entry repeats", () => {
+  const route: CallerRoute = { when: ["a"], say: ["one", "two"] };
+  assert.equal(routeSay(route, 1), "one");
+  assert.equal(routeSay(route, 2), "two");
+  assert.equal(routeSay(route, 5), "two");
+});
+
+function callerScenario(
+  overrides: Partial<CallerScript> = {},
+  assertions: Scenario["assertions"] = {},
+): Scenario {
+  return {
+    id: "c",
+    caller: {
+      opening: "I smell gas.",
+      routes: [
+        { when: ["safe"], say: ["We are safe."] },
+        { when: ["correct"], say: ["Yes."] },
+      ],
+      unmatched: "Say again?",
+      max_turns: 10,
+      ...overrides,
+    },
+    assertions,
+  };
+}
+
+test("runScenario: routed caller answers from routes, stops on goodbye", async () => {
+  const { fetchFn, calls } = fakeFetch([
+    { status: 200, body: { id: "conv-1" } },
+    { status: 200, body: { content: "Is anyone safe right now?" } },
+    { status: 200, body: { content: "Is the address correct?" } },
+    { status: 200, body: { content: "All set, goodbye!" } },
+    { status: 200, body: { data: [] } },
+  ]);
+  const { lines, out } = collect();
+  const r = await runScenario(fetchFn, cfg, callerScenario(), out);
+  assert.equal(r.verdict, "PASS");
+  assert.deepEqual(r.replies, [
+    "Is anyone safe right now?",
+    "Is the address correct?",
+    "All set, goodbye!",
+  ]);
+  assert.equal(calls.length, 5); // create + 3 chats + messages
+  assert.ok(lines.some((l) => l === "USER: I smell gas."));
+  assert.ok(lines.some((l) => l === "USER (routed): We are safe."));
+  assert.ok(lines.some((l) => l === "USER (routed): Yes."));
+});
+
+test("runScenario: third unmatched reply stops with caller_script_unmatched", async () => {
+  const { fetchFn, calls } = fakeFetch([
+    { status: 200, body: { id: "conv-1" } },
+    { status: 200, body: { content: "uh?" } },
+    { status: 200, body: { content: "pardon?" } },
+    { status: 200, body: { content: "x".repeat(250) } },
+    { status: 200, body: { data: [] } },
+  ]);
+  const { lines, out } = collect();
+  const r = await runScenario(
+    fetchFn,
+    cfg,
+    callerScenario({ routes: [{ when: ["zzzzz"], say: ["a"] }] }),
+    out,
+  );
+  assert.equal(r.verdict, "FAIL");
+  const f = r.failures.find((x) => x.assertion === "caller_script_unmatched");
+  assert.ok(f !== undefined);
+  assert.equal(f.detail, "x".repeat(200)); // last assistant reply, truncated
+  assert.equal(calls.length, 5); // create + opening + two unmatched sends + messages
+  assert.equal(lines.filter((l) => l === "USER: Say again?").length, 2);
+  assert.ok(lines.some((l) => l.includes("harness gap, not necessarily an assistant fault")));
+});
+
+test("runScenario: max_turns caps a caller run", async () => {
+  const { fetchFn, calls } = fakeFetch([
+    { status: 200, body: { id: "conv-1" } },
+    { status: 200, body: { content: "Are you safe?" } },
+    { status: 200, body: { content: "Are you safe right now?" } },
+    { status: 200, body: { data: [] } },
+  ]);
+  const { lines, out } = collect();
+  const r = await runScenario(
+    fetchFn,
+    cfg,
+    callerScenario({ routes: [{ when: ["safe"], say: ["ok"] }], max_turns: 2 }),
+    out,
+  );
+  assert.equal(r.verdict, "PASS");
+  assert.equal(r.replies.length, 2);
+  assert.equal(calls.length, 4); // create + 2 chats + messages
+  assert.ok(lines.some((l) => l.includes("max_turns 2")));
+});
+
+test("runScenario: turns scenarios behave exactly as before", async () => {
+  const { fetchFn, calls } = fakeFetch([
+    { status: 200, body: { id: "conv-1" } },
+    { status: 200, body: { content: "first answer" } },
+    { status: 200, body: { content: "second answer" } },
+    { status: 200, body: { data: [] } },
+  ]);
+  const { lines, out } = collect();
+  const r = await runScenario(
+    fetchFn,
+    cfg,
+    { id: "t", turns: ["hi", "again"], assertions: {} },
+    out,
+  );
+  assert.equal(r.verdict, "PASS");
+  assert.equal(calls.length, 4); // create + 2 chats + messages
+  assert.ok(lines.some((l) => l === "USER: hi"));
+  assert.ok(lines.some((l) => l === "USER: again"));
+  assert.ok(!lines.some((l) => l.startsWith("USER (routed):")));
 });
 
 test("golden_id is present on every scenario in scenarios.json (null allowed)", async () => {

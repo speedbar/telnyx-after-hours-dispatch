@@ -41,15 +41,19 @@
     {
       "id": "H-01-gas",
       "golden_id": "C-01",
-      "turns": [
-        "I can smell gas in my kitchen.",
-        "Yes we are safe, but we need urgent help.",
-        "It is 11 King Street, Wollongong.",
-        "Yes that is right.",
-        "My name is Alex and my number is 0400 123 456.",
-        "Yes that is correct.",
-        "No water near electrics."
-      ],
+      "caller": {
+        "opening": "I can smell gas in my kitchen.",
+        "routes": [
+          { "when": ["anyone else safe", "safe right now"], "say": ["Yes we are safe, but we need urgent help."] },
+          { "when": ["is that right", "is that correct", "correct?", "right?", "okay to call you back", "is it okay", "is that okay"], "say": ["Yes that is right."] },
+          { "when": ["house number"], "say": ["11 King Street, Wollongong."] },
+          { "when": ["full address", "address of the property", "the address", "suburb"], "say": ["It is 11 King Street, Wollongong."] },
+          { "when": ["your name", "best number", "name and"], "say": ["My name is Alex and my number is 0400 123 456."] },
+          { "when": ["electrics", "power points", "gas smell", "hazard"], "say": ["No water near electrics."] }
+        ],
+        "unmatched": "Sorry, can you say that again?",
+        "max_turns": 12
+      },
       "assertions": {
         "reply_contains": ["triple zero"],
         "reply_not_contains": ["0-4-1-2"],
@@ -72,14 +76,20 @@
     {
       "id": "H-02-flood",
       "golden_id": "C-02",
-      "turns": [
-        "My sink is flooding heavily, I need urgent help.",
-        "12 Charles Street, Newtown.",
-        "Yes.",
-        "Sam, 0400 123 456.",
-        "Yes.",
-        "No."
-      ],
+      "caller": {
+        "opening": "My sink is flooding heavily, I need urgent help.",
+        "routes": [
+          { "when": ["anyone else safe", "safe right now"], "say": ["Yes we are safe, but we need urgent help."] },
+          { "when": ["is that right", "is that correct", "correct?", "right?", "okay to call you back", "is it okay", "is that okay"], "say": ["Yes that is right."] },
+          { "when": ["house number"], "say": ["12 Charles Street, Newtown."] },
+          { "when": ["full address", "address of the property", "the address", "suburb"], "say": ["It is 12 Charles Street, Newtown."] },
+          { "when": ["your name", "best number", "name and"], "say": ["Sam, 0400 123 456."] },
+          { "when": ["electrics", "power points", "gas smell", "hazard"], "say": ["No."] },
+          { "when": ["spraying", "how much water", "where is the water"], "say": ["It is flooding heavily."] }
+        ],
+        "unmatched": "Sorry, can you say that again?",
+        "max_turns": 12
+      },
       "assertions": {
         "reply_not_contains": ["0-4-1-2"],
         "no_tool_with_question": true,
@@ -101,16 +111,20 @@
     {
       "id": "G-01-correction",
       "golden_id": "C-05",
-      "turns": [
-        "I can smell gas.",
-        "We are safe.",
-        "It's Leven King Street, Wollongong.",
-        "No, it's Eleven King Street, Wollongong.",
-        "Yes.",
-        "Alex, 0400 123 456.",
-        "Yes.",
-        "No."
-      ],
+      "caller": {
+        "opening": "I can smell gas.",
+        "routes": [
+          { "scope": "reply", "when": ["leven king"], "when_not": ["eleven king"], "say": ["No, it's Eleven King Street, Wollongong."] },
+          { "when": ["anyone else safe", "safe right now"], "say": ["We are safe."] },
+          { "when": ["house number"], "say": ["No, it's Eleven King Street, Wollongong."] },
+          { "when": ["is that right", "is that correct", "correct?", "right?", "okay to call you back", "is it okay", "is that okay"], "say": ["Yes."] },
+          { "when": ["full address", "address of the property", "the address", "suburb"], "say": ["It's Leven King Street, Wollongong.", "Eleven King Street, Wollongong."] },
+          { "when": ["your name", "best number", "name and"], "say": ["Alex, 0400 123 456."] },
+          { "when": ["electrics", "power points", "gas smell", "hazard"], "say": ["No."] }
+        ],
+        "unmatched": "Sorry, can you say that again?",
+        "max_turns": 12
+      },
       "assertions": {
         "reply_not_contains": ["0-4-1-2"],
         "no_tool_with_question": true,

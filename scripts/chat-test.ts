@@ -96,7 +96,13 @@ async function main(): Promise<number> {
         scenarioSkipped = true;
         write("tool assertions: SKIPPED");
       }
-      for (const f of r.failures) write(`FAILED ${f.assertion}: ${f.detail}`);
+      for (const f of r.failures) {
+        write(
+          f.assertion === "caller_script_unmatched"
+            ? `FAILED ${f.assertion}: ${f.detail} (harness gap, not necessarily an assistant fault)`
+            : `FAILED ${f.assertion}: ${f.detail}`,
+        );
+      }
       write(r.verdict);
       verdicts.push(r.verdict);
       for (const n of r.flowNodeIds) allFlow.add(n);

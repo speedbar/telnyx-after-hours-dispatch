@@ -50,10 +50,25 @@ export interface ScenarioAssertions {
   max_assistant_turns?: number;
 }
 
+export interface CallerRoute {
+  when: string[]; // lower-case keywords; any one is a substring match
+  when_not?: string[];
+  scope?: "question" | "reply"; // default "question"
+  say: string[]; // nth fire uses the nth entry; the last entry repeats
+}
+
+export interface CallerScript {
+  opening: string;
+  routes: CallerRoute[];
+  unmatched: string;
+  max_turns: number;
+}
+
 export interface Scenario {
   id: string;
   golden_id?: string | null;
-  turns: string[];
+  turns?: string[]; // exactly one of turns or caller
+  caller?: CallerScript;
   assertions: ScenarioAssertions;
 }
 
@@ -337,7 +352,8 @@ export function extractMessages(body: unknown): MessagesExtraction | null {
 // ---- scenario file ----
 
 // Every scenario must carry golden_id (null allowed) so the chat harness
-// stays mapped to the edge-case/test register.
+// stays mapped to the edge-case/test register, and exactly one of turns
+// (fixed script) or caller (opening + keyword routes).
 export function parseScenarios(raw: unknown): Scenario[] {
   if (!isRecord(raw) || !Array.isArray(raw.scenarios)) {
     throw new Error("scenarios.json: missing scenarios array");
@@ -347,22 +363,71 @@ export function parseScenarios(raw: unknown): Scenario[] {
     if (
       !isRecord(s) ||
       typeof s.id !== "string" ||
-      !Array.isArray(s.turns) ||
-      s.turns.some((t) => typeof t !== "string") ||
       !isRecord(s.assertions) ||
       !("golden_id" in s) ||
       (s.golden_id !== null && typeof s.golden_id !== "string")
     ) {
       throw new Error("scenarios.json: bad scenario shape");
     }
-    scenarios.push({
+    const hasTurns = s.turns !== undefined;
+    const hasCaller = s.caller !== undefined;
+    if (hasTurns === hasCaller) {
+      throw new Error("scenarios.json: bad scenario shape");
+    }
+    const scenario: Scenario = {
       id: s.id,
       golden_id: s.golden_id as string | null,
-      turns: s.turns as string[],
       assertions: s.assertions as ScenarioAssertions,
-    });
+    };
+    if (hasTurns) {
+      if (!Array.isArray(s.turns) || s.turns.some((t) => typeof t !== "string")) {
+        throw new Error("scenarios.json: bad scenario shape");
+      }
+      scenario.turns = s.turns as string[];
+    } else {
+      scenario.caller = parseCaller(s.caller);
+    }
+    scenarios.push(scenario);
   }
   return scenarios;
+}
+
+function parseCaller(raw: unknown): CallerScript {
+  if (
+    !isRecord(raw) ||
+    typeof raw.opening !== "string" ||
+    !Array.isArray(raw.routes) ||
+    typeof raw.unmatched !== "string" ||
+    typeof raw.max_turns !== "number" ||
+    !Number.isInteger(raw.max_turns) ||
+    raw.max_turns < 1
+  ) {
+    throw new Error("scenarios.json: bad scenario shape");
+  }
+  const routes: CallerRoute[] = [];
+  for (const r of raw.routes) {
+    if (
+      !isRecord(r) ||
+      !Array.isArray(r.when) ||
+      r.when.length === 0 ||
+      r.when.some((k) => typeof k !== "string") ||
+      !Array.isArray(r.say) ||
+      r.say.length === 0 ||
+      r.say.some((k) => typeof k !== "string") ||
+      (r.when_not !== undefined &&
+        (!Array.isArray(r.when_not) || r.when_not.some((k) => typeof k !== "string"))) ||
+      (r.scope !== undefined && r.scope !== "question" && r.scope !== "reply")
+    ) {
+      throw new Error("scenarios.json: bad scenario shape");
+    }
+    routes.push({
+      when: r.when as string[],
+      ...(r.when_not !== undefined ? { when_not: r.when_not as string[] } : {}),
+      ...(r.scope !== undefined ? { scope: r.scope as "question" | "reply" } : {}),
+      say: r.say as string[],
+    });
+  }
+  return { opening: raw.opening, routes, unmatched: raw.unmatched, max_turns: raw.max_turns };
 }
 
 // ---- assertion evaluation ----
@@ -613,6 +678,48 @@ export function formatCallEvidence(call: ToolCallRecord, index: number): string 
   return `  ${index + 1}. ${call.name} ${args} -> ${tail}`;
 }
 
+// ---- routed caller (T1.0d) ----
+
+// The "question": the last sentence of the reply that ends in "?", else the
+// whole reply.
+export function extractQuestion(reply: string): string {
+  const q = reply.lastIndexOf("?");
+  if (q === -1) return reply.trim();
+  const start =
+    Math.max(
+      reply.lastIndexOf(".", q),
+      reply.lastIndexOf("!", q),
+      reply.lastIndexOf("?", q - 1),
+      reply.lastIndexOf("\n", q),
+    ) + 1;
+  return reply.slice(start, q + 1).trim();
+}
+
+// First route, in file order, where any when keyword is a substring of the
+// subject and no when_not keyword is. The subject is the question, or the
+// whole reply for scope "reply". -1 when nothing matches.
+export function pickCallerRoute(routes: CallerRoute[], reply: string): number {
+  const question = extractQuestion(reply).toLowerCase();
+  const whole = reply.toLowerCase();
+  for (let i = 0; i < routes.length; i++) {
+    const r = routes[i];
+    const subject = r.scope === "reply" ? whole : question;
+    if (
+      r.when.some((kw) => subject.includes(kw)) &&
+      !(r.when_not ?? []).some((kw) => subject.includes(kw))
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// firedCount is 1-based: the first fire uses say[0] and past the end of the
+// list the last entry repeats.
+export function routeSay(route: CallerRoute, firedCount: number): string {
+  return route.say[Math.min(firedCount - 1, route.say.length - 1)];
+}
+
 // ---- per-scenario run flow ----
 
 export interface ScenarioResult {
@@ -651,6 +758,30 @@ async function post(
   } catch (err) {
     return { res: null, error: errMessage(err) };
   }
+}
+
+// One chat round-trip; the error strings are the run's ERROR lines.
+async function chatRound(
+  fetchFn: FetchLike,
+  cfg: RunnerConfig,
+  cid: string,
+  line: string,
+  timeoutMs: number,
+): Promise<{ content: string; error: null } | { content: null; error: string }> {
+  const t = await post(fetchFn, chatRequest(cfg, cid, line), timeoutMs);
+  if (t.res === null) return { content: null, error: `chat: ${t.error}` };
+  const tBody = await readBody(t.res);
+  if (!t.res.ok) {
+    return { content: null, error: `chat: status ${t.res.status} ${truncate(tBody.text)}` };
+  }
+  const content = extractAssistantContent(tBody.body);
+  if (content === null) {
+    return {
+      content: null,
+      error: `chat: no assistant content; keys: ${responseKeys(tBody.body)}`,
+    };
+  }
+  return { content, error: null };
 }
 
 export async function runScenario(
@@ -698,36 +829,65 @@ export async function runScenario(
   result.conversationId = cid;
 
   // 2. user turns; chat has no hangup, so a "goodbye" from the assistant
-  // ends the run: the remaining scripted turns are not sent.
-  for (let i = 0; i < scenario.turns.length; i++) {
-    const turn = scenario.turns[i];
-    out(`USER: ${turn}`);
-    const t = await post(fetchFn, chatRequest(cfg, cid, turn), timeoutMs);
-    if (t.res === null) {
-      result.error = `chat: ${t.error}`;
-      out(`ERROR ${result.error}`);
-      return result;
-    }
-    const tBody = await readBody(t.res);
-    if (!t.res.ok) {
-      result.error = `chat: status ${t.res.status} ${truncate(tBody.text)}`;
-      out(`ERROR ${result.error}`);
-      return result;
-    }
-    const content = extractAssistantContent(tBody.body);
-    if (content === null) {
-      result.error = `chat: no assistant content; keys: ${responseKeys(tBody.body)}`;
-      out(`ERROR ${result.error}`);
-      return result;
-    }
-    result.replies.push(content);
-    out(`ASSISTANT: ${content}`);
-    if (/goodbye/i.test(content)) {
-      const notSent = scenario.turns.length - (i + 1);
-      if (notSent > 0) {
-        out(`(assistant ended the call; ${notSent} scripted turns not sent)`);
+  // ends the run: the remaining scripted turns are not sent. Caller-script
+  // scenarios answer each reply from the keyword routes instead.
+  let callerGap: string | null = null; // last reply when caller_script_unmatched stops the run
+  if (scenario.caller !== undefined) {
+    const caller = scenario.caller;
+    const fired = caller.routes.map(() => 0);
+    let unmatchedCount = 0;
+    let sentCount = 0;
+    let pending = { line: caller.opening, prefix: "USER" };
+    for (;;) {
+      sentCount += 1;
+      out(`${pending.prefix}: ${pending.line}`);
+      const r = await chatRound(fetchFn, cfg, cid, pending.line, timeoutMs);
+      if (r.error !== null) {
+        result.error = r.error;
+        out(`ERROR ${r.error}`);
+        return result;
       }
-      break;
+      result.replies.push(r.content);
+      out(`ASSISTANT: ${r.content}`);
+      if (/goodbye/i.test(r.content)) break;
+      if (sentCount >= caller.max_turns) {
+        out(`(caller max_turns ${caller.max_turns} reached; stopping)`);
+        break;
+      }
+      const idx = pickCallerRoute(caller.routes, r.content);
+      if (idx === -1) {
+        unmatchedCount += 1;
+        if (unmatchedCount >= 3) {
+          callerGap = truncate(r.content, 200);
+          out("caller_script_unmatched: harness gap, not necessarily an assistant fault");
+          break;
+        }
+        pending = { line: caller.unmatched, prefix: "USER" };
+        continue;
+      }
+      fired[idx] += 1;
+      pending = { line: routeSay(caller.routes[idx], fired[idx]), prefix: "USER (routed)" };
+    }
+  } else {
+    const turns = scenario.turns ?? [];
+    for (let i = 0; i < turns.length; i++) {
+      const turn = turns[i];
+      out(`USER: ${turn}`);
+      const r = await chatRound(fetchFn, cfg, cid, turn, timeoutMs);
+      if (r.error !== null) {
+        result.error = r.error;
+        out(`ERROR ${r.error}`);
+        return result;
+      }
+      result.replies.push(r.content);
+      out(`ASSISTANT: ${r.content}`);
+      if (/goodbye/i.test(r.content)) {
+        const notSent = turns.length - (i + 1);
+        if (notSent > 0) {
+          out(`(assistant ended the call; ${notSent} scripted turns not sent)`);
+        }
+        break;
+      }
     }
   }
 
@@ -763,8 +923,11 @@ export async function runScenario(
     assistantTexts,
   });
   result.failures = evalResult.failures;
+  if (callerGap !== null) {
+    result.failures.push({ assertion: "caller_script_unmatched", detail: callerGap });
+  }
   result.toolAssertionsSkipped = evalResult.skipped.length > 0;
-  result.verdict = evalResult.failures.length === 0 ? "PASS" : "FAIL";
+  result.verdict = result.failures.length === 0 ? "PASS" : "FAIL";
   return result;
 }
 
