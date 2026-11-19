@@ -156,21 +156,21 @@ test("reserve_technician: pool order, replay idempotency, exhaustion", async () 
   const reserve = handler("reserve_technician");
   const r1 = (await reserve({ ...validReserve("call-001"), extra: "ignored" }, env)) as ToolResult;
   assert.equal(r1.ok, true);
-  assert.equal(r1.technician_id, "tech-01");
-  assert.equal(r1.technician_name, "Jordan");
-  assert.equal(r1.eta_minutes, 30);
+  // No technician identity or ETA leaks to the model (BUG-013).
+  assert.equal(r1.technician_id, undefined);
+  assert.equal(r1.technician_name, undefined);
+  assert.equal(r1.eta_minutes, undefined);
   assert.equal(r1.attempt, 1);
   assert.equal(isJobId(r1.job_id), true);
   assert.ok(Date.parse(r1.hold_expires_at as string) > Date.now());
 
-  // Replay with the same call_ref: same job and technician, tech-02 untouched.
+  // Replay with the same call_ref: same job, tech-02 untouched (attempt 2 next).
   const r1b = (await reserve(validReserve("call-001"), env)) as ToolResult;
   assert.equal(r1b.ok, true);
   assert.equal(r1b.job_id, r1.job_id);
-  assert.equal(r1b.technician_id, "tech-01");
+  assert.equal(r1b.attempt, 1);
 
   const r2 = (await reserve(validReserve("call-002"), env)) as ToolResult;
-  assert.equal(r2.technician_id, "tech-02");
   assert.equal(r2.attempt, 2);
 
   const r3 = await reserve(validReserve("call-003"), env);
@@ -211,7 +211,6 @@ test("reserve_technician: meta conversation id wins; replay with a different mod
   const r2 = (await reserve(validReserve("second-model-ref"), env, ctx)) as ToolResult;
   assert.equal(r2.ok, true);
   assert.equal(r2.job_id, r1.job_id);
-  assert.equal(r2.technician_id, r1.technician_id);
 });
 
 test("create_job before reserve -> no_active_reservation", async () => {
