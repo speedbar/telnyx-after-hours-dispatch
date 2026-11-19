@@ -5,11 +5,14 @@ import { JobActor } from "../src/actors/JobActor.js";
 
 // Map-backed fake ctx.storage; get() returns a structuredClone so tests mimic
 // the runtime (no shared object references). The fake ctx has no id, so
-// call_ref falls back to "call".
+// call_ref falls back to "call". Supports the alarm API (setAlarm/getAlarm/
+// deleteAlarm/delete) like the real Stateful Actor storage.
 type CtorArgs = ConstructorParameters<typeof JobActor>;
 
 function makeActor() {
   const map = new Map<string, unknown>();
+  let alarmAt: number | null = null;
+  let deleteCount = 0;
   const storage = {
     get<T>(key: string): Promise<T | undefined> {
       return Promise.resolve(
@@ -20,12 +23,28 @@ function makeActor() {
       map.set(key, structuredClone(value));
       return Promise.resolve();
     },
+    delete(key: string): Promise<void> {
+      if (map.has(key)) {
+        deleteCount++;
+        map.delete(key);
+      }
+      return Promise.resolve();
+    },
+    setAlarm: (when: number) => {
+      alarmAt = when;
+      return Promise.resolve();
+    },
+    getAlarm: () => Promise.resolve(alarmAt),
+    deleteAlarm: () => {
+      alarmAt = null;
+      return Promise.resolve();
+    },
   };
   const actor = new JobActor(
     { storage } as unknown as CtorArgs[0],
     {} as unknown as CtorArgs[1],
   );
-  return { actor, map };
+  return { actor, map, alarm: () => alarmAt, deleteCount: () => deleteCount };
 }
 
 // Mute the structured logger (console.log) for the whole file.
@@ -94,6 +113,15 @@ test("release true, then false on replay; false for a wrong job_id", async () =>
   assert.deepEqual(await actor.release({ job_id: "j1", reason: "job done" }), { released: false });
 });
 
+// S1.8 3b: the callback confirmed at reservation wins over a brief value.
+test("brief keeps the contact_phone stored at open (first confirmed wins)", async () => {
+  const { actor } = makeActor();
+  await actor.open({ ...openArgs, contact_phone: "61411111111" });
+  assert.deepEqual(await actor.brief({ ...briefArgs, contact_phone: "61422222222" }), { ok: true, state: "briefed" });
+  const rec = await actor.get();
+  assert.equal(rec?.contact_phone, "61411111111");
+});
+
 test("after release: brief is no_active_reservation, open is already_closed", async () => {
   const { actor } = makeActor();
   await actor.open(openArgs);
@@ -105,6 +133,33 @@ test("after release: brief is no_active_reservation, open is already_closed", as
 test("get returns null on an empty actor", async () => {
   const { actor } = makeActor();
   assert.equal(await actor.get(), null);
+});
+
+// S1.8: open keeps the confirmed caller details and the flags; open also
+// arms the retention alarm; alarm() deletes once and is idempotent.
+test("open stores flags and caller details, sets a retention alarm, alarm deletes once", async () => {
+  const { actor, alarm, deleteCount } = makeActor();
+  const before = Date.now();
+  const r = await actor.open({
+    ...openArgs,
+    flags: ["address_no_house_number"],
+    customer_name: "Ada",
+    address: "1 Smith St",
+    contact_phone: "61491570006",
+  });
+  assert.equal(r.ok, true);
+  const rec = await actor.get();
+  assert.deepEqual(rec?.flags, ["address_no_house_number"]);
+  assert.equal(rec?.customer_name, "Ada");
+  assert.equal(rec?.contact_phone, "61491570006");
+  const at = alarm();
+  assert.ok(at !== null && at >= before + 6 * 86_400_000 && at <= Date.now() + 8 * 86_400_000, "retention alarm about 7 days out");
+  await actor.alarm();
+  assert.equal(await actor.get(), null);
+  assert.equal(deleteCount(), 1);
+  // At-least-once delivery: a second alarm must not throw and must not delete again.
+  await actor.alarm();
+  assert.equal(deleteCount(), 1);
 });
 
 test("invalid inputs are rejected for open and brief", async () => {

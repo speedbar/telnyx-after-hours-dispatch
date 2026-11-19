@@ -8,7 +8,7 @@ import { DirectoryActor } from "../src/actors/DirectoryActor.js";
 import { TechnicianActor } from "../src/actors/TechnicianActor.js";
 import { JobActor } from "../src/actors/JobActor.js";
 import { keys } from "../src/lib/kv-keys.js";
-import { isJobId } from "../src/lib/validate.js";
+import { isJobId, resolveCallRef } from "../src/lib/validate.js";
 import { TOOLS, type ToolEnv, type ToolResult } from "../src/tools/index.js";
 
 type DCtor = ConstructorParameters<typeof DirectoryActor>;
@@ -98,6 +98,25 @@ function handler(name: string) {
   return t.handler;
 }
 
+// The full stored JobRecord for a model-side call_ref (resolved the same way
+// the tools resolve it). Observation only; nothing here reaches the model.
+async function jobRecord(env: ToolEnv, call_ref: string) {
+  const { ref } = await resolveCallRef({ call_ref }, {});
+  const rec = await env.JOBS?.idFromName(ref as string).get();
+  return rec as unknown as {
+    job_id: string;
+    tech_id: string;
+    urgency: string;
+    trade: string;
+    flags?: string[];
+    customer_name?: string;
+    address?: string;
+    contact_phone?: string;
+    details?: string;
+    hazards?: string;
+  } | null;
+}
+
 const validReserve = (call_ref: string) => ({
   call_ref,
   customer_name: "Sam Rivera",
@@ -163,8 +182,10 @@ test("reserve_technician: pool order, replay idempotency, exhaustion", async () 
   assert.equal(r1.attempt, 1);
   assert.equal(isJobId(r1.job_id), true);
   assert.ok(Date.parse(r1.hold_expires_at as string) > Date.now());
+  // S1.8: plumbing is eligible on tech-01 then tech-03.
+  assert.equal((await jobRecord(env, "call-001"))?.tech_id, "tech-01");
 
-  // Replay with the same call_ref: same job, tech-02 untouched (attempt 2 next).
+  // Replay with the same call_ref: same job, tech-03 untouched (attempt 2 next).
   const r1b = (await reserve(validReserve("call-001"), env)) as ToolResult;
   assert.equal(r1b.ok, true);
   assert.equal(r1b.job_id, r1.job_id);
@@ -172,6 +193,7 @@ test("reserve_technician: pool order, replay idempotency, exhaustion", async () 
 
   const r2 = (await reserve(validReserve("call-002"), env)) as ToolResult;
   assert.equal(r2.attempt, 2);
+  assert.equal((await jobRecord(env, "call-002"))?.tech_id, "tech-03");
 
   const r3 = await reserve(validReserve("call-003"), env);
   assert.deepEqual(r3, fail("no_technician_available"));
@@ -291,6 +313,146 @@ test("create_job: blank optional fields count as not provided; non-empty invalid
   assert.deepEqual(await create({ ...base, contact_phone: "" }, env), good);
   const bad = await create({ ...base, contact_phone: "abc" }, env);
   assert.deepEqual(bad, fail("invalid_input", ["contact_phone"]));
+});
+
+// S1.8 item 1: eligibility is built from trades, in pool order.
+test("reserve_technician: a gas job reserves tech-01 only, never tech-02 or tech-03", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const gas = { ...validReserve("gas-1"), trade: "gas", summary: "The heater pilot light keeps going out" };
+  const r1 = (await reserve(gas, env)) as ToolResult;
+  assert.equal(r1.ok, true);
+  assert.equal(r1.attempt, 1);
+  assert.equal((await jobRecord(env, "gas-1"))?.tech_id, "tech-01");
+  // tech-01 held: a second gas job finds nobody eligible (next:"fallback").
+  assert.deepEqual(await reserve({ ...gas, call_ref: "gas-2" }, env), fail("no_technician_available"));
+});
+
+test("reserve_technician: electrical and hvac go to tech-02; plumbing tries tech-01 then tech-03", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const r1 = (await reserve({ ...validReserve("tr-elec"), trade: "electrical" }, env)) as ToolResult;
+  assert.equal(r1.ok, true);
+  assert.equal((await jobRecord(env, "tr-elec"))?.tech_id, "tech-02");
+  // hvac has the same single eligible technician: held tech-02 -> nobody.
+  assert.deepEqual(
+    await reserve({ ...validReserve("tr-hvac"), trade: "hvac" }, env),
+    fail("no_technician_available"),
+  );
+  const p1 = (await reserve(validReserve("tr-plum-1"), env)) as ToolResult;
+  assert.equal(p1.attempt, 1);
+  assert.equal((await jobRecord(env, "tr-plum-1"))?.tech_id, "tech-01");
+  const p2 = (await reserve(validReserve("tr-plum-2"), env)) as ToolResult;
+  assert.equal(p2.ok, true);
+  assert.equal(p2.attempt, 2);
+  assert.equal((await jobRecord(env, "tr-plum-2"))?.tech_id, "tech-03");
+  // Both plumbing technicians held: a trade nobody free has ends as data.
+  assert.deepEqual(await reserve(validReserve("tr-plum-3"), env), fail("no_technician_available"));
+});
+
+// S1.8 item 2: the effective (floored) values are stored and drive eligibility.
+test("reserve_technician: a gas keyword corrects the trade and raises urgency before routing", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const r = (await reserve(
+    { ...validReserve("floor-1"), trade: "plumbing", urgency: "urgent", summary: "There is a gas smell near the hot water unit" },
+    env,
+  )) as ToolResult;
+  assert.equal(r.ok, true);
+  const rec = await jobRecord(env, "floor-1");
+  assert.equal(rec?.trade, "gas");
+  assert.equal(rec?.urgency, "emergency");
+  assert.equal(rec?.tech_id, "tech-01");
+});
+
+// S1.8 item 3: only an undiallable callback is a hard reject.
+test("reserve_technician: undiallable callback numbers are rejected; AU mobile and international pass", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const bad = ["0412345", "000", "112", "0000000000"];
+  for (let i = 0; i < bad.length; i++) {
+    assert.deepEqual(
+      await reserve({ ...validReserve(`cb-bad-${i}`), callback_number: bad[i] }, env),
+      fail("invalid_input", ["callback_number"]),
+    );
+  }
+  const au = (await reserve({ ...validReserve("cb-au"), callback_number: "0400 123 456" }, env)) as ToolResult;
+  assert.equal(au.ok, true);
+  const intl = (await reserve({ ...validReserve("cb-intl"), callback_number: "+44 20 7123 4567" }, env)) as ToolResult;
+  assert.equal(intl.ok, true);
+});
+
+// S1.8 item 3: soft flags accept the job, live on the record, never reach the model.
+test("reserve_technician: an address without a house number reserves and stores the flag", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const r = (await reserve({ ...validReserve("flag-1"), address: "Banksia Street" }, env)) as ToolResult;
+  assert.equal(r.ok, true);
+  assert.equal(r.flags, undefined);
+  const rec = await jobRecord(env, "flag-1");
+  assert.deepEqual(rec?.flags, ["address_no_house_number"]);
+  // job_opened logs the flag names only.
+  assert.ok(
+    logLines.some((l) => l.includes('"event":"job_opened"') && l.includes("address_no_house_number")),
+    "flag names must appear on the job_opened log line",
+  );
+});
+
+// S1.8 3b: the callback validated at reservation is the record (F10).
+test("create_job: the confirmed reservation callback wins over a missing or different contact_phone", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const create = handler("create_job");
+  await reserve({ ...validReserve("sc-1"), callback_number: "0412 000 001" }, env);
+  const base = { call_ref: "sc-1", customer_name: "Sam Rivera", address: "12 Banksia Street", details: "Burst pipe" };
+  // No contact_phone at all (F10): the reservation value survives.
+  const c1 = await create(base, env);
+  assert.equal(c1.ok, true);
+  assert.equal((await jobRecord(env, "sc-1"))?.contact_phone, "61412000001");
+  // A different contact_phone later still loses.
+  const c2 = await create({ ...base, contact_phone: "+61 422 000 002" }, env);
+  assert.equal(c2.ok, true);
+  assert.equal((await jobRecord(env, "sc-1"))?.contact_phone, "61412000001");
+});
+
+test("create_job: 'none'-style hazards are not stored; real hazards are", async () => {
+  for (const [ref, trade, hazards, stored] of [
+    ["hz-none", "plumbing", "none", undefined],
+    ["hz-no", "electrical", "No.", undefined],
+    ["hz-real", "plumbing", "gas smell", "gas smell"],
+  ] as const) {
+    const env = await seeded();
+    await handler("reserve_technician")({ ...validReserve(ref), trade }, env);
+    const c = await handler("create_job")(
+      { call_ref: ref, customer_name: "Sam Rivera", address: "12 Banksia Street", details: "Burst pipe", hazards },
+      env,
+    );
+    assert.equal(c.ok, true);
+    assert.equal((await jobRecord(env, ref))?.hazards, stored);
+  }
+});
+
+// S1.8 item 4: first write wins on briefing.
+test("create_job: a second create_job returns the same job and never overwrites", async () => {
+  const env = await seeded();
+  const reserve = handler("reserve_technician");
+  const create = handler("create_job");
+  const r = (await reserve(validReserve("br-1"), env)) as ToolResult;
+  const job_id = r.job_id as string;
+  const good = { ok: true, job_id, reference_spoken: job_id.split("").join(" ") };
+  const c1 = await create(
+    { call_ref: "br-1", customer_name: "Sam Rivera", address: "12 Banksia Street", details: "Burst pipe under the house" },
+    env,
+  );
+  assert.deepEqual(c1, good);
+  const c2 = await create(
+    { call_ref: "br-1", customer_name: "Nope Nope", address: "999 Wrong Road", details: "a totally different story" },
+    env,
+  );
+  assert.deepEqual(c2, good);
+  const rec = await jobRecord(env, "br-1");
+  assert.equal(rec?.customer_name, "Sam Rivera");
+  assert.equal(rec?.details, "Burst pipe under the house");
 });
 
 test("release_technician: works without job_id; replay and unknown call are no_active_reservation", async () => {

@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyFloors,
   cleanText,
   isCallRef,
   isJobId,
@@ -62,6 +63,54 @@ test("jobIdFromCallRef is deterministic and matches isJobId", async () => {
 
 test("spoken spaces every character", () => {
   assert.equal(spoken("JA2B3C"), "J A 2 B 3 C");
+});
+
+// S1.8 item 2: severity and trade floors.
+test("applyFloors: gas keyword raises urgency and corrects trade", () => {
+  assert.deepEqual(applyFloors("plumbing", "urgent", "I can smell gas"), {
+    trade: "gas",
+    urgency: "emergency",
+    raised: true,
+    corrected: true,
+  });
+  // A gas trade is always an emergency, keyword or not.
+  assert.deepEqual(applyFloors("gas", "urgent", "hot water pilot light out"), {
+    trade: "gas",
+    urgency: "emergency",
+    raised: true,
+    corrected: false,
+  });
+});
+
+test("applyFloors: flooding raises urgency; a value is never lowered", () => {
+  assert.deepEqual(applyFloors("plumbing", "urgent", "water is flooding the kitchen"), {
+    trade: "plumbing",
+    urgency: "emergency",
+    raised: true,
+    corrected: false,
+  });
+  // Already emergency with no keyword: unchanged, not lowered.
+  assert.deepEqual(applyFloors("electrical", "emergency", "power point is dead"), {
+    trade: "electrical",
+    urgency: "emergency",
+    raised: false,
+    corrected: false,
+  });
+});
+
+test("applyFloors: whole-word matching (gaslight does not match gas)", () => {
+  assert.deepEqual(applyFloors("electrical", "urgent", "the gaslight fitting flickers"), {
+    trade: "electrical",
+    urgency: "urgent",
+    raised: false,
+    corrected: false,
+  });
+  assert.deepEqual(applyFloors("other", "urgent", "carbon monoxide alarm beeping"), {
+    trade: "other",
+    urgency: "emergency",
+    raised: true,
+    corrected: false,
+  });
 });
 
 test("resolveCallRef: meta wins, SIP address becomes a c: ref, empties null, deterministic", async () => {
