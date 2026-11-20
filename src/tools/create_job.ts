@@ -14,28 +14,18 @@ import {
 import type { ToolCtx, ToolEnv, ToolResult } from "./index";
 
 // S1.9 (BUG-005): per-hop latency, same pattern as reserve_technician.
-type HopKey = "hop_job_get_ms" | "hop_tech_status_ms" | "hop_brief_ms";
-
-// Write one hop timing to the log context (no-op when called without ctx).
+// Time one awaited hop and write the resulting field(s) to the log context
+// (no-op when called without ctx).
 async function timed2<T>(
-  key: HopKey,
   ctx: ToolCtx | undefined,
   p: Promise<T>,
+  fields: (d: number) => ToolLogCtx,
 ): Promise<T> {
   const start = Date.now();
   try {
     return await p;
   } finally {
-    if (ctx !== undefined) {
-      const d = Date.now() - start;
-      const fields: ToolLogCtx =
-        key === "hop_job_get_ms"
-          ? { hop_job_get_ms: d }
-          : key === "hop_tech_status_ms"
-            ? { hop_tech_status_ms: d }
-            : { hop_brief_ms: d };
-      setToolLogCtx(ctx, fields);
-    }
+    if (ctx !== undefined) setToolLogCtx(ctx, fields(Date.now() - start));
   }
 }
 
@@ -102,7 +92,7 @@ export async function handleCreateJob(
   const hazards = hazardsRaw;
 
   const jobsStub = jobs.idFromName(call_ref);
-  const job = await timed2("hop_job_get_ms", ctx, jobsStub.get());
+  const job = await timed2(ctx, jobsStub.get(), (d) => ({ hop_job_get_ms: d }));
   if (job === null || job.state === "released") {
     return fail("no_active_reservation");
   }
@@ -120,7 +110,7 @@ export async function handleCreateJob(
     return { ok: true, job_id, reference_spoken: spoken(job_id) };
   }
   if (job.state === "reserved") {
-    const s = await timed2("hop_tech_status_ms", ctx, tech.idFromName(job.tech_id).status());
+    const s = await timed2(ctx, tech.idFromName(job.tech_id).status(), (d) => ({ hop_tech_status_ms: d }));
     const h = s.held_for;
     if (
       h === undefined ||
@@ -134,14 +124,16 @@ export async function handleCreateJob(
 
   // The JobActor keeps the callback stored at reservation (first confirmed
   // wins) and drops "none"-style hazards, so pass both through as-is.
-  const briefed = await timed2("hop_brief_ms", ctx, jobsStub.brief({
+  // The brief RPC IS the job write/update: kept under both hop names for
+  // continuity with the S1.9 logs (S1.9b).
+  const briefed = await timed2(ctx, jobsStub.brief({
     job_id,
     customer_name,
     address,
     ...(contact_phone === undefined ? {} : { contact_phone }),
     details,
     ...(hazards === undefined ? {} : { hazards }),
-  }));
+  }), (d) => ({ hop_brief_ms: d, hop_job_write_ms: d }));
   if (!briefed.ok) {
     return fail(briefed.reason === "invalid_input" ? "invalid_input" : "no_active_reservation");
   }
@@ -150,6 +142,7 @@ export async function handleCreateJob(
     // sweep clears it silently instead of logging a false hold_expired (S1.9e).
     // A failure here must not fail the call — the job is already briefed.
     // Error category only, never the message (it may embed values).
+    const markStart = Date.now();
     try {
       const stub = tech.idFromName(job.tech_id) as unknown as {
         markBooked?: (a: { call_ref: string; job_id: string }) => Promise<unknown>;
@@ -166,6 +159,10 @@ export async function handleCreateJob(
         error: err instanceof Error ? err.name : "unknown",
         ...corr,
       });
+    } finally {
+      if (ctx !== undefined) {
+        setToolLogCtx(ctx, { hop_mark_booked_ms: Date.now() - markStart });
+      }
     }
   }
   return { ok: true, job_id, reference_spoken: spoken(job_id) };

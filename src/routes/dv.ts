@@ -9,7 +9,7 @@
 // signature or any secret — only the salted caller_hash.
 
 import { readConfig } from "../lib/config";
-import { callerHash, log, newRequestId, timed } from "../lib/log";
+import { bootFields, callerHash, log, newRequestId, timed } from "../lib/log";
 import { verifyTelnyx } from "../lib/sig";
 import { spoken } from "../lib/validate";
 
@@ -134,7 +134,7 @@ export async function handleDv(
   } catch {
     // Not JSON (or an odd shape): the main flow turns this into dv_degraded.
   }
-  log({ component: "dv", event: "dv_in", request_id, conv_hash });
+  log({ component: "dv", event: "dv_in", request_id, conv_hash, ...bootFields() });
 
   const publicKey = readConfig(env, "TELNYX_PUBLIC_KEY");
   if (publicKey === undefined) {

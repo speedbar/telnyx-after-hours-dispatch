@@ -178,6 +178,13 @@ test("1. known caller: 200, dynamic_variables only, string values, customer fiel
     assert.equal(dvLookup.tool, "actor.lookup");
     assert.equal(dvLookup.outcome, "ok");
     assert.equal(typeof dvLookup.latency_ms, "number");
+    // S1.9b: dv_in carries the instance boot facts; this is the instance's
+    // first request in this file's process.
+    const dvIn = parsed(cap.lines).find((l) => l.event === "dv_in");
+    assert.ok(dvIn, "expected a dv_in log line");
+    assert.equal(dvIn.first_request, true);
+    assert.equal(typeof dvIn.boot_age_ms, "number");
+    assert.ok((dvIn.boot_age_ms as number) >= 0);
   } finally {
     cap.restore();
   }
@@ -200,6 +207,10 @@ test("2. unknown caller: caller_known false, empty customer fields", async () =>
     assert.equal(vars.caller_known, "false");
     assert.equal(vars.customer_name, "");
     assert.equal(vars.customer_address, "");
+    // S1.9b: second request of the file's process -> first_request false.
+    const dvIn = parsed(cap.lines).find((l) => l.event === "dv_in");
+    assert.equal(dvIn?.first_request, false);
+    assert.equal(typeof dvIn?.boot_age_ms, "number");
   } finally {
     cap.restore();
   }

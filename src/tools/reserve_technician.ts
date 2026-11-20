@@ -174,6 +174,11 @@ export async function handleReserveTechnician(
     time("hop_flag_ms", dir.idFromName("directory").flag("dispatch_enabled")),
     time("hop_job_get_ms", jobs.idFromName(call_ref).get()),
   ]);
+  // S1.9b: where the flag value came from. The actor read model answers
+  // "cache"; a missing key means the tool's implicit enabled default fired.
+  // "kv" and "timeout" cannot fire today: this path never reads KV and has
+  // no timeout, retry or backoff.
+  hop({ flag_source: flag === null ? "default" : "cache" });
   if (flag === "false") return fail("disabled");
 
   // Replay or continuation of an existing job: refresh the hold idempotently.
@@ -205,6 +210,8 @@ export async function handleReserveTechnician(
     const profile = TECH_PROFILES[id];
     return profile.trades.includes(floored.trade as Trade);
   });
+  // S1.9(e): eligible_count on the mcp_call line too, not only reserve_attempt.
+  hop({ eligible_count: eligible.length });
 
   // One reserve_attempt line per attempt (S1.9 item 5a): the technician id is
   // an id only (tech-01), never a name.

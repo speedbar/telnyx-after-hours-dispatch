@@ -7,6 +7,7 @@
 
 import { readConfig } from "../lib/config";
 import {
+  bootFields,
   callerHash,
   log,
   newRequestId,
@@ -155,6 +156,8 @@ const HOP_KEYS = [
   "hop_job_open_ms",
   "hop_tech_status_ms",
   "hop_brief_ms",
+  "hop_mark_booked_ms",
+  "hop_job_write_ms",
 ] as const;
 
 // tools/call: dispatch to the registry handler and log one mcp_call line
@@ -240,6 +243,12 @@ async function handleToolCall(
   // The technician the tool reserved (or the job's technician): id only.
   if (typeof tlc.technician_id === "string") fields.technician_id = tlc.technician_id;
   if (conv_hash !== undefined) fields.conv_hash = conv_hash;
+  // S1.9b diagnostics: flag source, pool size and instance boot facts.
+  if (typeof tlc.flag_source === "string") fields.flag_source = tlc.flag_source;
+  if (typeof tlc.eligible_count === "number") fields.eligible_count = tlc.eligible_count;
+  const boot = bootFields();
+  fields.boot_age_ms = boot.boot_age_ms;
+  fields.first_request = boot.first_request;
 
   if (run.threw) {
     fields.outcome = "fail";

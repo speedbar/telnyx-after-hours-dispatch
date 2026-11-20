@@ -11,7 +11,7 @@ import { keys } from "../src/lib/kv-keys.js";
 import { isJobId, resolveCallRef } from "../src/lib/validate.js";
 import { TOOLS, type TechStub, type ToolEnv, type ToolResult } from "../src/tools/index.js";
 import { handleMcp, type McpEnv } from "../src/routes/mcp.js";
-import { callerHash } from "../src/lib/log.js";
+import { callerHash, toolLogCtxOf } from "../src/lib/log.js";
 
 type DCtor = ConstructorParameters<typeof DirectoryActor>;
 type TCtor = ConstructorParameters<typeof TechnicianActor>;
@@ -580,16 +580,58 @@ test("S1.9: hop timing fields appear on mcp_call; no argument values logged", as
     assert.equal(typeof reserve[k], "number", `${k} must be a number on the reserve mcp_call`);
     assert.ok((reserve[k] as number) >= 0);
   }
-  for (const k of ["hop_job_get_ms", "hop_tech_status_ms", "hop_brief_ms"]) {
+  for (const k of ["hop_job_get_ms", "hop_tech_status_ms", "hop_brief_ms", "hop_mark_booked_ms", "hop_job_write_ms"]) {
     assert.equal(typeof created[k], "number", `${k} must be a number on the create_job mcp_call`);
     assert.ok((created[k] as number) >= 0);
   }
   // The tool-call total stays in latency_ms.
   assert.equal(typeof reserve.latency_ms, "number");
+
+  // S1.9b: the job write is the brief RPC (same value, both names) and the
+  // distinct-await hops add up to the total within about 30 ms.
+  assert.equal(created.hop_job_write_ms, created.hop_brief_ms);
+  const cjSum =
+    (created.hop_job_get_ms as number) +
+    (created.hop_tech_status_ms as number) +
+    (created.hop_brief_ms as number) +
+    (created.hop_mark_booked_ms as number);
+  assert.ok(
+    Math.abs(cjSum - (created.latency_ms as number)) <= 30,
+    `create_job hops ${cjSum} vs total ${created.latency_ms}`,
+  );
+
+  // S1.9b: flag_source and eligible_count on the reserve ok line, boot facts
+  // on every mcp_call (first_request true exactly once per instance).
+  assert.equal(reserve.flag_source, "cache");
+  assert.equal(reserve.eligible_count, 2);
+  for (const l of [reserve, created]) {
+    assert.equal(typeof l.boot_age_ms, "number");
+    assert.ok((l.boot_age_ms as number) >= 0);
+  }
+  assert.equal(reserve.first_request, true, "first mcp_call of the instance");
+  assert.equal(created.first_request, false);
+
   const joined = logLines.slice(before).join("\n");
   for (const bad of ["Sam Rivera", "Banksia", "61412000001", "0412 000 001", "Burst pipe under the house"]) {
     assert.ok(!joined.includes(bad), `log leaked argument value: ${bad}`);
   }
+});
+
+// S1.9b: flag_source distinguishes the actor read ("cache") from the implicit
+// enabled default when the flag key is missing; never a KV read or a timeout.
+test("S1.9b: flag_source is cache when seeded, default when the key is missing", async () => {
+  const withFlag = await seeded();
+  const ctx1 = {};
+  const r1 = (await handler("reserve_technician")(validReserve("fs-1"), withFlag, ctx1)) as ToolResult;
+  assert.equal(r1.ok, true);
+  assert.equal(toolLogCtxOf(ctx1).flag_source, "cache");
+  assert.equal(toolLogCtxOf(ctx1).eligible_count, 2);
+
+  const noFlag = makeToolEnv().env;
+  const ctx2 = {};
+  const r2 = (await handler("reserve_technician")(validReserve("fs-2"), noFlag, ctx2)) as ToolResult;
+  assert.equal(r2.ok, true, "a missing flag is the enabled default");
+  assert.equal(toolLogCtxOf(ctx2).flag_source, "default");
 });
 
 // S1.9 item 5 (a)-(d): technician ids, urgency from/to + category, one

@@ -40,6 +40,11 @@ export interface LogFields {
   hop_job_open_ms?: number;
   hop_tech_status_ms?: number;
   hop_brief_ms?: number;
+  hop_mark_booked_ms?: number; // S1.9b
+  hop_job_write_ms?: number; // S1.9b: same await as hop_brief_ms (the job write)
+  flag_source?: "kv" | "cache" | "default" | "timeout"; // S1.9b: where the flag came from
+  boot_age_ms?: number; // S1.9b: ms since this instance's module boot
+  first_request?: boolean; // S1.9b: true exactly once per instance
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -82,6 +87,11 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     hop_job_open_ms: fields.hop_job_open_ms ?? null,
     hop_tech_status_ms: fields.hop_tech_status_ms ?? null,
     hop_brief_ms: fields.hop_brief_ms ?? null,
+    hop_mark_booked_ms: fields.hop_mark_booked_ms ?? null,
+    hop_job_write_ms: fields.hop_job_write_ms ?? null,
+    flag_source: fields.flag_source ?? null,
+    boot_age_ms: fields.boot_age_ms ?? null,
+    first_request: fields.first_request ?? null,
   });
 }
 
@@ -98,6 +108,10 @@ export interface ToolLogCtx {
   hop_job_open_ms?: number;
   hop_tech_status_ms?: number;
   hop_brief_ms?: number;
+  hop_mark_booked_ms?: number;
+  hop_job_write_ms?: number;
+  flag_source?: "kv" | "cache" | "default" | "timeout";
+  eligible_count?: number;
 }
 const toolLogCtx = new WeakMap<object, ToolLogCtx>();
 
@@ -117,6 +131,18 @@ export function log(fields: LogFields): void {
 
 export function newRequestId(): string {
   return crypto.randomUUID();
+}
+
+// S1.9b: instance boot diagnostics. BOOT_AT is set when this module is first
+// evaluated (function instance boot); first_request is true exactly once, for
+// the first request this instance serves (the check-and-set is synchronous).
+const BOOT_AT = Date.now();
+let firstRequestServed = false;
+
+export function bootFields(): { boot_age_ms: number; first_request: boolean } {
+  const first_request = !firstRequestServed;
+  firstRequestServed = true;
+  return { boot_age_ms: Math.max(0, Date.now() - BOOT_AT), first_request };
 }
 
 // SHA-256 of salt + e164, lowercase hex, first 12 characters.
