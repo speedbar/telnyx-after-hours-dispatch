@@ -1,6 +1,6 @@
-# cfg-6 paste sheet (APPROVED by Nabeel 20 Nov 2026, not yet pasted)
+# cfg-6 paste sheet (APPROVED, PASTED and promoted to main by Nabeel, 20 Nov 2026)
 
-Live is cfg-5. `assistant.md`, `nodes.md` and `consistency.md` now match this sheet (they win over it if they ever differ). Next the blocks are pasted into the Portal whole, in the order below, and read back (section 5). Triage, Close, Hang Up, the seven edges and the tool toggles are unchanged from cfg-5.
+Live is now cfg-6. `assistant.md`, `nodes.md` and `consistency.md` now match this sheet (they win over it if they ever differ). Next the blocks are pasted into the Portal whole, in the order below, and read back (section 5). Triage, Close, Hang Up, the seven edges and the tool toggles are unchanged from cfg-5.
 
 ## 0. Decisions (made 20 Nov 2026)
 
@@ -97,13 +97,28 @@ Once you have told the caller what happens next, move on.
 | Success closing line: "Your job is logged." only; "the team will call back" removed from the Promises paragraph, step 5, the last paragraph and the Job node | Calls JA7M5V and JAPJ3S: the line promises a callback nothing triggers (closed-loop gap, BUG-008 class). |
 | Step 6: one retry for bad_fields callback_number; Reserve node mirrors; release_technician only if reserve_technician returned ok | P2 in `consistency.md` (S1.8 hard-rejects an undiallable callback, and cfg-5 said "no second attempt"). Live `--repeat 3` on cfg-5: release_technician called with nothing reserved in 2 of 21 runs. |
 | Tool fields: digits for house numbers; never TBC, unknown or N/A | Chat runs on cfg-5: house numbers sent as words; one run with a reasoning leak and "TBC" placeholders (H-02 run 3, 1 of 21). The 20 Nov voice calls sent digits ("11 King Street"). |
+| Edge E4 reworded so it does not fight the callback retry | `edges.md` (F21): the old text sent the model to Fallback on the first reserve failure. |
 
 Not changed on purpose: the model sent urgency `urgent` for a gas call (caller said "urgent help"). The code floor (S1.8, D19) raised it to emergency and logged `urgency_raised`. Hard guards stay in code, not prompts.
 
 ## 6. Read-back and tests after paste
 
 1. Assistant Instructions equal section 1. Details, Reserve, Job and Fallback equal sections 2 to 4. Instructions Mode is Append and LLM is assistant default on all five.
-2. Seven edges, tool toggles and MCP allowed tools unchanged (see `edges.md`); Hang Up ON everywhere.
+2. Seven edges (E4 reworded), tool toggles and MCP allowed tools as in section 7; Hang Up ON everywhere.
 3. Chat golden set before and after (`npm run chat-test -- --repeat 3`). Scenario-only fixes (T1.0e, from STATUS): callback_number any-of ["0400 123 456","0400123456"]; confirm routes add "is that"; hazards routes add "smell gas", "water near", "near the electrics", "appliances"; keep the urgency=emergency assertion. New assertions: closing line contains no "call you back"; release_technician not called when reserve returned ok false.
 4. Voice calls: gas call that says "smell" (expect the scripted gas line once, exactly); a call with an unclear hazard answer (expect one re-ask, then continue); the failure drill (flip `flag/dispatch_enabled` false, one call, flip back) to see the Fallback path by voice for the first time.
 5. Merge into `consistency.md` after approval: findings F17 (gas line skipped after STT inversion), F18 (unclear hazard answer not re-asked), F19 (closing line promises an untriggered callback, repeat of F16), F20 (release_technician with nothing reserved); change log row for cfg-6.
+
+## 7. Edges, toggles and MCP (part of every version; read back after any save)
+
+| # | From | To | Condition |
+|---|---|---|---|
+| E1 | Triage | Details | urgency and trade are known |
+| E2 | Details | Reserve | name, address, problem and callback number are all confirmed |
+| E3 | Reserve | Job | reserve_technician returned ok |
+| E4 | Reserve | Fallback | reserve_technician failed and the problem is not callback_number, or the callback_number retry also failed, or a tool error  (CHANGED in cfg-6) |
+| E5 | Job | Fallback | create_job failed |
+| E6 | Fallback | Close | the caller has been told what happens next |
+| E7 | Close | Hang Up | Default (fallback), no text |
+
+Toggles: Triage and Details override assistant tools with only Hang Up ON; Reserve, Job and Fallback inherit (Hang Up ON). MCP `dispatch-mcp` allowed tools: `reserve_technician`, `create_job`, `release_technician`; `lookup_customer` unticked. No Job to Close edge.

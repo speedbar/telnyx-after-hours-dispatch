@@ -1,6 +1,6 @@
-# Edges, tools and graph (canonical, cfg-5; edges and toggles unchanged since cfg-3)
+# Edges, tools and graph (canonical, cfg-6; only E4 changed since cfg-3)
 
-Read live from the Portal on 19 Nov 2026 and again on 20 Nov 2026 (cfg-4 read-back). Every edge below matches live. Note: the model often does the whole call from one node, so these LLM edges are advisory; rules that must always hold live in the assistant text.
+Read live from the Portal on 19 Nov 2026 and again on 20 Nov 2026 (cfg-4 read-back). Every edge below matched live on those reads (cfg-5). On 20 Nov Nabeel reworded E4 for cfg-6 and promoted cfg-6 to main; the E4 text below is what he was given. Read back from the Portal by Claude (Claude in Chrome, read-only) on 20 Nov 2026 after promotion: main version named "Changed Reserve to Fallback edge condition", 7 nodes and 7 edges, E4 text exact, node texts equal this folder, Override and Hang Up toggles as in the table below, MCP allowed tools as below. Edge texts E1, E2, E3, E5 and E6 were seen truncated in the canvas labels only (unchanged from cfg-5, not re-read in full). Note: the model often does the whole call from one node, so these LLM edges are advisory; rules that must always hold live in the assistant text.
 
 ## Edges (7)
 
@@ -9,10 +9,12 @@ Read live from the Portal on 19 Nov 2026 and again on 20 Nov 2026 (cfg-4 read-ba
 | E1 | Triage | Details | LLM | urgency and trade are known |
 | E2 | Details | Reserve | LLM | name, address, problem and callback number are all confirmed |
 | E3 | Reserve | Job | LLM | reserve_technician returned ok |
-| E4 | Reserve | Fallback | LLM | reserve failed, no technician available, or a tool error |
+| E4 | Reserve | Fallback | LLM | reserve_technician failed and the problem is not callback_number, or the callback_number retry also failed, or a tool error |
 | E5 | Job | Fallback | LLM | create_job failed |
 | E6 | Fallback | Close | LLM | the caller has been told what happens next |
 | E7 | Close | Hang Up | Default (fallback) | none |
+
+E4 (cfg-6): the old text, "reserve failed, no technician available, or a tool error", would send the model to Fallback on the first failure, including a bad callback number, and so contradict the one callback retry in assistant step 6 and the Reserve node. The new text lets that retry happen first. Evidence: review of cfg-6 against the edges, 20 Nov (no call yet).
 
 There is deliberately no Job to Close edge. Job ends the call itself (reference, logged line, goodbye, hangup).
 

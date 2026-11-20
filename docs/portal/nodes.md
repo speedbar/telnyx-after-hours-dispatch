@@ -1,4 +1,4 @@
-# Workflow nodes (canonical, cfg-6, pending paste; live is cfg-5)
+# Workflow nodes (canonical, cfg-6, live since 20 Nov 2026)
 
 7 nodes. Paste a whole node at a time. All prompt nodes: Instructions Mode = **Append to assistant instructions**, LLM = **Use assistant default**.
 
@@ -19,7 +19,7 @@ Change from cfg-2: removed ROUTINE and added hvac, so the words match the tool s
 
 ## 2. Details
 
-Type: prompt. Tools tab: Override ON; only Hang Up ON; none added. Text differs from live cfg-5 (cfg-6, pending paste).
+Type: prompt. Tools tab: Override ON; only Hang Up ON; none added. Text is cfg-6 (live; read back and matched 20 Nov).
 
 ```
 Your job here is to collect and confirm four things: the full address including suburb, what is wrong if not yet clear, the caller's name, and the callback number.
@@ -59,7 +59,7 @@ Change cfg-6: closing line is "Your job is logged." only (no callback promise); 
 
 ## 5. Fallback
 
-Type: prompt. Tools tab: Override OFF; none added. Text differs from live cfg-5 (cfg-6 wording, pending paste). The failure path has not been exercised by voice yet (see P3).
+Type: prompt. Tools tab: Override OFF; none added. Text is cfg-6 (live; read back and matched 20 Nov). The failure path has not been exercised by voice yet (see P3).
 
 ```
 Your job here is to speak to the caller. Say: "I'm sorry, I couldn't log your job just now." If the urgency is emergency, then say: "If anyone is in danger, call triple zero." Then say: "Please call our office on" and read {{fallback_number_spoken}}. Do not say anything has been recorded, saved or logged, do not read a reference and do not promise a callback. Do not ask the caller any more questions.

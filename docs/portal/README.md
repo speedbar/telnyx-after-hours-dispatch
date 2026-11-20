@@ -3,7 +3,7 @@
 Everything the Telnyx Portal holds for `dispatch-ai` that is not code lives here: assistant instructions, every node's text, every edge, every tool toggle. If it is not in this folder, it is not decided.
 
 Last read live from the Portal: 20 Nov 2026 (read-only, nothing changed by the read). That read was cfg-4. Nabeel pasted cfg-5 afterwards and reports it live; no read-back diff of cfg-5 is recorded here (do one after the next paste). List-number rendering of the stored text is still VERIFY.
-Config version this folder describes: **cfg-6, pending paste** (live is cfg-5). The cfg-6 edits are the assistant Instructions block and the Details, Reserve, Job and Fallback nodes (`consistency.md` section 5). Edge cases and what is and is not handled: `docs/edge-cases.md`.
+Config version this folder describes: **cfg-6, live since 20 Nov 2026** (pasted and promoted to main by Nabeel; E4 reworded). The cfg-6 edits are the assistant Instructions block and the Details, Reserve, Job and Fallback nodes (`consistency.md` section 5). Edge cases and what is and is not handled: `docs/edge-cases.md`.
 
 ## Files
 
@@ -27,17 +27,14 @@ Config version this folder describes: **cfg-6, pending paste** (live is cfg-5). 
 
 ## Status of live vs this folder
 
-| Place | Live (cfg-5) equals folder (cfg-6)? | Action |
+| Place | Live (cfg-6) equals folder (cfg-6)? | Evidence |
 |---|---|---|
-| Assistant instructions | No: gas trigger, hazard re-ask, closing line, callback retry, tool-field rules (cfg-6) | Paste whole block from `assistant.md` |
-| Triage | Yes | None |
-| Details | No: hazard re-ask | Paste whole node |
-| Reserve | No: callback retry, digits, no placeholders | Paste whole node |
-| Job | No: closing line, digits, no placeholders | Paste whole node |
-| Fallback | No: release only if reserve returned ok | Paste whole node, then run the failure drill (P3) |
-| Close, Hang Up | Yes | None |
-| Edges (7) | Yes | None |
-| Tool toggles | Yes | None |
-| MCP allowed tools | Yes: `lookup_customer` already unticked | None |
+| Assistant instructions | Yes | Read back by Nabeel 20 Nov; compared by script, identical ignoring blank lines |
+| Details, Reserve, Job, Fallback | Yes | Read back by Nabeel 20 Nov; compared by eye |
+| Triage, Close, Hang Up | Yes | Read from the Portal 20 Nov (Triage text and toggles; Close and Hang Up nodes present) |
+| Edges (7) | Yes; E4 reworded and exact | Read from the Portal 20 Nov; E1, E2, E3, E5, E6 seen as truncated labels only |
+| Tool toggles, MCP allowed tools | Yes | Read from the Portal 20 Nov: Triage and Details override ON with Hang Up only; Reserve, Job, Fallback inherit; MCP allowed tools the three listed; filler-message row present (content and delay not read) |
 
-Pending, not yet applied: P1 (caller record variables, needs a real-number call to test), P3 (Fallback, Close, Hang Up by voice, after cfg-6 and the failure drill), P4 to P6 (delayed-response line, voice tags, model stalls), P7 (closing line B after the technician ring), P8 (text the caller their job ID, stretch). P2 (invalid callback retry) is applied in cfg-6. See `consistency.md` section 4.
+Next: the chat golden set and voice calls (`consistency.md` section 5).
+
+Pending, not yet applied: P1 (caller record variables, needs a real-number call to test), P3 (Fallback, Close, Hang Up by voice, failure drill), P4 to P6 (delayed-response line, voice tags, model stalls), P7 (closing line B after the technician ring), P8 (text the caller their job ID, stretch). P2 (invalid callback retry) is applied in cfg-6. See `consistency.md` section 4.
