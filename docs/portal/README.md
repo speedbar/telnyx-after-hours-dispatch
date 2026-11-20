@@ -2,8 +2,8 @@
 
 Everything the Telnyx Portal holds for `dispatch-ai` that is not code lives here: assistant instructions, every node's text, every edge, every tool toggle. If it is not in this folder, it is not decided.
 
-Last read live from the Portal: 20 Nov 2026 (read-only, nothing changed by the read). Live is cfg-4 and matched this folder's cfg-4 text, apart from list-number rendering (VERIFY whether the stored text includes "1." to "5.").
-Config version this folder describes: **cfg-5, pending paste**. The cfg-5 edits are the assistant Instructions block, the Job node and the Fallback node (`consistency.md` section 5). Edge cases and what is and is not handled: `docs/edge-cases.md`.
+Last read live from the Portal: 20 Nov 2026 (read-only, nothing changed by the read). That read was cfg-4. Nabeel pasted cfg-5 afterwards and reports it live; no read-back diff of cfg-5 is recorded here (do one after the next paste). List-number rendering of the stored text is still VERIFY.
+Config version this folder describes: **cfg-6, pending paste** (live is cfg-5). The cfg-6 edits are the assistant Instructions block and the Details, Reserve, Job and Fallback nodes (`consistency.md` section 5). Edge cases and what is and is not handled: `docs/edge-cases.md`.
 
 ## Files
 
@@ -27,17 +27,17 @@ Config version this folder describes: **cfg-5, pending paste**. The cfg-5 edits 
 
 ## Status of live vs this folder
 
-| Place | Live (cfg-4) equals folder (cfg-5)? | Action |
+| Place | Live (cfg-5) equals folder (cfg-6)? | Action |
 |---|---|---|
-| Assistant instructions | No: step 6 failure rule, reserve guard, one-goodbye rule, number guard (cfg-5) | Paste whole block from `assistant.md` |
+| Assistant instructions | No: gas trigger, hazard re-ask, closing line, callback retry, tool-field rules (cfg-6) | Paste whole block from `assistant.md` |
 | Triage | Yes | None |
-| Details | Yes | None |
-| Reserve | Yes | None |
-| Job | No: "only if reserve_technician returned ok" (cfg-5) | Paste whole node |
-| Fallback | No: new wording (cfg-5) | Paste whole node, then run the failure drill (P3) |
+| Details | No: hazard re-ask | Paste whole node |
+| Reserve | No: callback retry, digits, no placeholders | Paste whole node |
+| Job | No: closing line, digits, no placeholders | Paste whole node |
+| Fallback | No: release only if reserve returned ok | Paste whole node, then run the failure drill (P3) |
 | Close, Hang Up | Yes | None |
 | Edges (7) | Yes | None |
 | Tool toggles | Yes | None |
 | MCP allowed tools | Yes: `lookup_customer` already unticked | None |
 
-Pending, not yet applied: P1 (caller record variables, needs a real-number call to test), P2 (invalid callback retry, ships with S1.8), P3 (Fallback, Close, Hang Up by voice, after cfg-5 and the failure drill), P4 to P6 (delayed-response line, voice tags, model stalls). See `consistency.md` section 4.
+Pending, not yet applied: P1 (caller record variables, needs a real-number call to test), P3 (Fallback, Close, Hang Up by voice, after cfg-6 and the failure drill), P4 to P6 (delayed-response line, voice tags, model stalls), P7 (closing line B after the technician ring), P8 (text the caller their job ID, stretch). P2 (invalid callback retry) is applied in cfg-6. See `consistency.md` section 4.
