@@ -6,7 +6,7 @@
 // written off the hot path. Keep both methods tiny: no caching, no TTL.
 
 import { StatefulActor } from "@telnyx/edge-runtime";
-import { assertValidKey, keys } from "../lib/kv-keys";
+import { assertValidKey, keys, sanitizeSegment } from "../lib/kv-keys";
 
 export class DirectoryActor extends StatefulActor {
   // One call for the /dv hot path: the feature flag and the customer record,
@@ -26,6 +26,21 @@ export class DirectoryActor extends StatefulActor {
   // Single-flag read (same key helper and validation as lookup()).
   async flag(name: string): Promise<string | null> {
     return (await this.ctx.storage.get<string>(keys.flag(name))) ?? null;
+  }
+
+  // D20: per-day counter in actor storage under a UTC-day key (the ring daily
+  // cap). One read-modify-write; over cap returns ok:false without writing.
+  async bumpCounter(name: string, cap: number): Promise<{ ok: boolean; count: number }> {
+    if (typeof name !== "string" || name === "" || !Number.isInteger(cap) || cap < 1) {
+      return { ok: false, count: 0 };
+    }
+    const day = new Date().toISOString().slice(0, 10); // UTC day, dashes only
+    const key = "count/" + sanitizeSegment(name) + "/" + day;
+    const count = (await this.ctx.storage.get<number>(key)) ?? 0;
+    if (count >= cap) return { ok: false, count };
+    const next = count + 1;
+    await this.ctx.storage.put(key, next);
+    return { ok: true, count: next };
   }
 
   // Off-hot-path write used by /admin/seed. Every key is validated BEFORE any

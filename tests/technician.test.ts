@@ -8,7 +8,7 @@ import { TechnicianActor } from "../src/actors/TechnicianActor.js";
 // needs no internal runtime types.
 type CtorArgs = ConstructorParameters<typeof TechnicianActor>;
 
-function makeActor() {
+function makeActor(env: Record<string, unknown> = {}) {
   const map = new Map<string, unknown>();
   const alarms: number[] = [];
   const storage = {
@@ -33,7 +33,7 @@ function makeActor() {
   };
   const actor = new TechnicianActor(
     { storage } as unknown as CtorArgs[0],
-    {} as unknown as CtorArgs[1],
+    env as unknown as CtorArgs[1],
   );
   return { actor, map, alarms };
 }
@@ -153,4 +153,117 @@ test("invalid reserve inputs are rejected", async () => {
   assert.deepEqual(await actor.reserve({ call_ref: "c1", job_id: "j1", ttl_s: 0 }), { ok: false, reason: "invalid_input" });
   assert.deepEqual(await actor.reserve({ call_ref: "c1", job_id: "j1", ttl_s: 601 }), { ok: false, reason: "invalid_input" });
   assert.deepEqual(await actor.reserve({ call_ref: "c1", job_id: "j1", ttl_s: 1.5 }), { ok: false, reason: "invalid_input" });
+});
+
+// D20-2 regression: one technician was reserved for four jobs in 25 minutes.
+// While dispatched, every reserve attempt answers busy; after dispatched_until
+// the technician lazily returns to available.
+test("dispatched: reserve is busy until dispatched_until, then free again", async () => {
+  const { actor } = makeActor();
+  await actor.reserve({ call_ref: "c1", job_id: "j1" });
+  const d = await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 1 });
+  assert.equal(d.ok, true);
+  assert.equal((await actor.status()).status, "dispatched");
+  // Four more jobs while dispatched: every one is refused.
+  for (const n of [2, 3, 4, 5]) {
+    assert.deepEqual(await actor.reserve({ call_ref: `c${n}`, job_id: `j${n}` }), { ok: false, reason: "busy" });
+  }
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.equal((await actor.status()).status, "available");
+  assert.equal((await actor.reserve({ call_ref: "c9", job_id: "j9" })).ok, true);
+});
+
+test("dispatch: clears the hold, arms the alarm, busy_s default and env override", async () => {
+  const a = makeActor();
+  await a.actor.reserve({ call_ref: "c1", job_id: "j1" });
+  const before = Date.now();
+  const d = await a.actor.dispatch({ call_ref: "c1", job_id: "j1" });
+  assert.equal(d.ok, true);
+  if (d.ok) {
+    assert.ok(d.until >= before + 1800_000 && d.until <= Date.now() + 1800_000, "DISPATCH_BUSY_S default 1800");
+  }
+  const s = await a.actor.status();
+  assert.equal(s.status, "dispatched");
+  assert.equal(s.held_for, undefined, "dispatch clears the hold");
+  assert.equal(s.dispatched_for?.call_ref, "c1");
+  assert.equal(a.alarms[a.alarms.length - 1], s.dispatched_for?.until, "alarm armed to until");
+
+  const b = makeActor({ DISPATCH_BUSY_S: "5" });
+  const d2 = await b.actor.dispatch({ call_ref: "c1", job_id: "j1" });
+  assert.equal(d2.ok, true);
+  if (d2.ok) {
+    assert.ok(d2.until <= Date.now() + 5_000 && d2.until > Date.now(), "env override wins");
+  }
+  const bad = makeActor({ DISPATCH_BUSY_S: "0" });
+  const d3 = await bad.actor.dispatch({ call_ref: "c1", job_id: "j1" });
+  assert.ok(d3.ok && d3.until > Date.now() + 1700_000, "out-of-range env falls back to 1800");
+  assert.deepEqual(await a.actor.dispatch({ call_ref: "", job_id: "j1" }), { ok: false, reason: "invalid_input" });
+});
+
+test("clearDispatch frees the technician early; setShift(false) clears a dispatch", async () => {
+  const { actor, alarms } = makeActor();
+  await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 1800 });
+  assert.deepEqual(await actor.clearDispatch(), { cleared: true });
+  assert.deepEqual(await actor.clearDispatch(), { cleared: false });
+  assert.equal((await actor.status()).status, "available");
+  assert.equal(alarms.length, 0, "no timer left pending");
+  assert.equal((await actor.reserve({ call_ref: "c2", job_id: "j2" })).ok, true);
+
+  await actor.dispatch({ call_ref: "c2", job_id: "j2", busy_s: 1800 });
+  const off = await actor.setShift(false);
+  assert.equal(off.status, "off_shift");
+  assert.equal(off.dispatched_for, undefined);
+  assert.deepEqual(await actor.reserve({ call_ref: "c3", job_id: "j3" }), { ok: false, reason: "off_shift" });
+});
+
+test("extendHold: same call_ref and job_id only; keeps a long ring from lapsing", async () => {
+  const { actor, alarms } = makeActor();
+  await actor.reserve({ call_ref: "c1", job_id: "j1", ttl_s: 1 });
+  await actor.markBooked({ call_ref: "c1", job_id: "j1" });
+  assert.deepEqual(await actor.extendHold({ call_ref: "c1", job_id: "wrong", ttl_s: 60 }), { extended: false });
+  assert.deepEqual(await actor.extendHold({ call_ref: "wrong", job_id: "j1", ttl_s: 60 }), { extended: false });
+  assert.deepEqual(await actor.extendHold({ call_ref: "c1", job_id: "j1", ttl_s: 0 }), { extended: false });
+  assert.deepEqual(await actor.extendHold({ call_ref: "c1", job_id: "j1", ttl_s: 60 }), { extended: true });
+  assert.equal(alarms[alarms.length - 1], (await actor.status()).held_for?.expires_at, "alarm moved to the new expiry");
+  // The original 1 s hold would have lapsed by now; the extension kept it.
+  await new Promise((r) => setTimeout(r, 1100));
+  const s = await actor.status();
+  assert.equal(s.status, "held");
+  assert.equal(s.held_for?.booked, true, "booked untouched: no false hold_expired");
+});
+
+test("alarm: re-arms to whichever of hold or dispatch expires first; harmless twice", async () => {
+  const { actor, alarms } = makeActor();
+  // Dispatch clears the hold, so the only pending wake-up is the dispatch end.
+  await actor.reserve({ call_ref: "c1", job_id: "j1", ttl_s: 90 });
+  await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 1800 });
+  alarms.length = 0;
+  await actor.alarm();
+  assert.equal(alarms.length, 1);
+  assert.equal(alarms[0], (await actor.status()).dispatched_for?.until);
+  await actor.alarm();
+  assert.equal(alarms.length, 2, "idempotent re-arm on repeat delivery");
+});
+
+test("tech_dispatch_expired: logged once when the dispatch lapses", async () => {
+  const logged: string[] = [];
+  const prev = console.log; // the file-wide muted logger
+  console.log = (m: unknown) => logged.push(String(m));
+  const lapseLines = () =>
+    logged
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.event === "tech_dispatch_expired");
+  try {
+    const a = makeActor();
+    await a.actor.dispatch({ call_ref: "dx-1", job_id: "jd-1", busy_s: 1 });
+    await new Promise((r) => setTimeout(r, 1100));
+    await a.actor.alarm();
+    await a.actor.alarm();
+    await a.actor.status();
+    assert.equal(lapseLines().length, 1, `expected one tech_dispatch_expired, got: ${logged.join("\n")}`);
+    assert.equal(lapseLines()[0].call_ref, "dx-1");
+    assert.equal((await a.actor.status()).status, "available");
+  } finally {
+    console.log = prev;
+  }
 });

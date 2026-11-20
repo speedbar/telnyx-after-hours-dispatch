@@ -70,7 +70,7 @@ test("start: dry_run logs ring_dry_run for attempt 1 and ends terminal, never di
     candidates: ["t1", "t2"],
     now: 1000,
   });
-  assert.ok(["accepted", "exhausted", "disabled"].includes(s.status), `terminal, got ${s.status}`);
+  assert.equal(s.status, "dry_run");
   assert.equal(s.attempt, 0, "no attempt was made");
   assert.deepEqual(s.outcome_log, []);
   assert.deepEqual(eff, [{ type: "log", event: "ring_dry_run", technician_id: "t1", attempt: 1 }]);

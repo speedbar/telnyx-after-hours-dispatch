@@ -80,6 +80,7 @@ export type RingStatus =
   | "prompting"
   | "accepted"
   | "exhausted"
+  | "dry_run"
   | "disabled";
 export type RingOutcome =
   | "accepted"
@@ -270,7 +271,7 @@ export function reduceRing(
           ...state,
           mode: "dry_run",
           candidates: event.candidates,
-          status: "exhausted",
+          status: "dry_run",
         };
         return [
           s,

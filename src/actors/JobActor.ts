@@ -6,8 +6,17 @@
 import { StatefulActor } from "@telnyx/edge-runtime";
 import { readConfig } from "../lib/config";
 import { log } from "../lib/log.js";
+import {
+  initRingState,
+  reduceRing,
+  type RingEffect,
+  type RingEvent,
+  type RingState,
+} from "../lib/ring.js";
 
 type JobState = "reserved" | "briefed" | "released";
+// D20: where the technician ring stands; JobState stays untouched (spec 1.1).
+type DispatchState = "ringing" | "dispatched" | "unassigned";
 
 interface JobRecord {
   call_ref: string;
@@ -25,6 +34,10 @@ interface JobRecord {
   hazards?: string;
   release_reason?: string;
   flags?: string[]; // soft-validation flag names for human review; names only
+  ring?: RingState; // D20: per-job ring state machine snapshot
+  dispatch_state?: DispatchState;
+  retention_at?: number; // ms epoch; absent on pre-D20 records means due now
+  ring_at?: number; // ms epoch when the ring start is due (multiplexed alarm)
   created_at: number;
   updated_at: number;
 }
@@ -80,6 +93,7 @@ export class JobActor extends StatefulActor {
     const rec = await this.ctx.storage.get<JobRecord>("job");
     if (!rec) {
       const now = Date.now();
+      const retention_at = now + retentionDays(this.env) * 86_400_000;
       const record: JobRecord = {
         call_ref: this._callRef(),
         job_id: args.job_id,
@@ -89,6 +103,7 @@ export class JobActor extends StatefulActor {
         trade: args.trade,
         suburb: args.suburb,
         summary: args.summary,
+        retention_at,
         created_at: now,
         updated_at: now,
       };
@@ -99,9 +114,7 @@ export class JobActor extends StatefulActor {
       if (args.address !== undefined) record.address = args.address;
       if (args.contact_phone !== undefined) record.contact_phone = args.contact_phone;
       await this.ctx.storage.put("job", record);
-      await this.ctx.storage.setAlarm(
-        now + retentionDays(this.env) * 86_400_000,
-      );
+      await this.ctx.storage.setAlarm(retention_at);
       log({ component: "actor", event: "job_opened", outcome: "ok", technician_id: record.tech_id, job_id: record.job_id, call_ref: record.call_ref, flags: (args.flags ?? []).join(",") });
       return { ok: true, state: "reserved", created: true };
     }
@@ -189,11 +202,68 @@ export class JobActor extends StatefulActor {
     return (await this.ctx.storage.get<JobRecord>("job")) ?? null;
   }
 
-  // Retention alarm (S1.8): delete the stored job record. Delivery is
-  // at-least-once, so this must be idempotent; deleting a missing key is a
-  // no-op. Never removed on brief or release: the record still expires.
+  // Re-arm the one alarm (D20 multiplex) to whichever of retention / ring
+  // start comes first; with neither pending there is nothing to wake for.
+  private async _rearm(rec: JobRecord): Promise<void> {
+    const times = [rec.retention_at, rec.ring_at].filter(
+      (t): t is number => t !== undefined,
+    );
+    if (times.length === 0) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.setAlarm(Math.min(...times));
+  }
+
+  // D20: schedule the ring start on the multiplexed alarm (spec 1.2).
+  async setRingAt(ms: number): Promise<{ ok: boolean }> {
+    if (!Number.isFinite(ms)) return { ok: false };
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return { ok: false };
+    rec.ring_at = ms;
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
+    await this._rearm(rec);
+    return { ok: true };
+  }
+
+  // D20: one read-modify-write around the pure reducer — the new ring state
+  // and any job_state effect landing on dispatch_state are stored together,
+  // so a crash between them cannot split the two. Effects return as data for
+  // the caller to execute.
+  async ringEvent(
+    event: RingEvent,
+  ): Promise<{ state: RingState | null; effects: RingEffect[] }> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return { state: null, effects: [] };
+    const [nextRing, effects] = reduceRing(rec.ring ?? initRingState(), event);
+    const next: JobRecord = { ...rec, ring: nextRing, updated_at: Date.now() };
+    for (const e of effects) {
+      if (e.type === "job_state") next.dispatch_state = e.state;
+    }
+    await this.ctx.storage.put("job", next);
+    return { state: nextRing, effects };
+  }
+
+  // Multiplexed alarm (D20): a due retention deletes the job record; a due
+  // ring_at is consumed (the dial itself is wired in D20-5) and never deletes.
+  // At-least-once delivery: every path is idempotent; a repeat is a no-op.
   async alarm(): Promise<void> {
-    await this.ctx.storage.delete("job");
-    log({ component: "actor", event: "job_expired", outcome: "ok", call_ref: this._callRef() });
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return; // already deleted: harmless repeat
+    const now = Date.now();
+    // Pre-D20 records carry no retention_at; their only alarm was retention.
+    if ((rec.retention_at ?? 0) <= now) {
+      await this.ctx.storage.delete("job");
+      log({ component: "actor", event: "job_expired", outcome: "ok", call_ref: this._callRef() });
+      return;
+    }
+    if (rec.ring_at !== undefined && rec.ring_at <= now) {
+      delete rec.ring_at;
+      rec.updated_at = now;
+      await this.ctx.storage.put("job", rec);
+      log({ component: "actor", event: "ring_alarm_due", outcome: "ok", call_ref: this._callRef(), job_id: rec.job_id });
+    }
+    await this._rearm(rec);
   }
 }

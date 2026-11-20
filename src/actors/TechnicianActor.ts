@@ -1,7 +1,8 @@
 import { StatefulActor, type AlarmInfo } from "@telnyx/edge-runtime";
+import { readConfig } from "../lib/config";
 import { log } from "../lib/log.js";
 
-type TechStatus = "available" | "held" | "off_shift";
+type TechStatus = "available" | "held" | "off_shift" | "dispatched";
 
 interface TechState {
   id: string;
@@ -15,12 +16,26 @@ interface TechState {
     created_at?: number;
     booked?: boolean;
   };
+  // D20: set only on an explicit accept; reserve answers "busy" until then.
+  dispatched_for?: {
+    call_ref: string;
+    job_id: string;
+    until: number;
+  };
   updated_at: number;
 }
 
 type ReserveResult =
   | { ok: true; expires_at: number }
   | { ok: false; reason: "busy" | "off_shift" | "invalid_input" };
+
+// D20: how long an accepted job keeps the technician busy. DISPATCH_BUSY_S,
+// default 1800, accepts integer seconds 1 to 86400.
+function dispatchBusyS(env: unknown): number {
+  const raw = readConfig(env, "DISPATCH_BUSY_S");
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 86400 ? n : 1800;
+}
 
 export class TechnicianActor extends StatefulActor {
   async ping(): Promise<{ pong: boolean; count: number }> {
@@ -29,10 +44,11 @@ export class TechnicianActor extends StatefulActor {
     return { pong: true, count };
   }
 
-  // Read state once; lazily clear an expired hold. A lapse logs exactly one
-  // hold_expired line (technician id + hold length in latency_ms): the cleared
-  // state is persisted here so no later read can log it again (S1.9e). A hold
-  // already consumed by create_job (booked) is swept silently.
+  // Read state once; lazily clear an expired hold and an expired dispatch. A
+  // hold lapse logs exactly one hold_expired line (technician id + hold length
+  // in latency_ms). A dispatch lapse logs one tech_dispatch_expired line. The
+  // cleared state is persisted here so no later read can log again (S1.9e). A
+  // hold already consumed by create_job (booked) is swept silently.
   private async _state(): Promise<{ state: TechState; cleared: boolean }> {
     const stored = await this.ctx.storage.get<TechState>("state");
     const ctxId = (this.ctx as { id?: unknown }).id;
@@ -43,7 +59,9 @@ export class TechnicianActor extends StatefulActor {
         status: "available",
         updated_at: 0,
       } satisfies TechState);
-    if (state.held_for && state.held_for.expires_at <= Date.now()) {
+    const now = Date.now();
+    let cleared = false;
+    if (state.held_for && state.held_for.expires_at <= now) {
       const held = state.held_for;
       if (held.booked !== true) {
         log({
@@ -57,11 +75,39 @@ export class TechnicianActor extends StatefulActor {
       }
       delete state.held_for;
       if (state.status === "held") state.status = "available";
-      state.updated_at = Date.now();
-      await this.ctx.storage.put("state", state);
-      return { state, cleared: true };
+      cleared = true;
     }
-    return { state, cleared: false };
+    if (state.dispatched_for && state.dispatched_for.until <= now) {
+      const disp = state.dispatched_for;
+      log({
+        component: "actor",
+        event: "tech_dispatch_expired",
+        technician_id: state.id,
+        call_ref: disp.call_ref,
+        job_id: disp.job_id,
+      });
+      delete state.dispatched_for;
+      if (state.status === "dispatched") state.status = "available";
+      cleared = true;
+    }
+    if (cleared) {
+      state.updated_at = now;
+      await this.ctx.storage.put("state", state);
+    }
+    return { state, cleared };
+  }
+
+  // Re-arm the one alarm to whichever of hold / dispatch expires first; with
+  // neither pending there is nothing to wake for.
+  private async _rearm(state: TechState): Promise<void> {
+    const times = [state.held_for?.expires_at, state.dispatched_for?.until].filter(
+      (t): t is number => t !== undefined,
+    );
+    if (times.length === 0) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
   async reserve(args: {
@@ -87,6 +133,11 @@ export class TechnicianActor extends StatefulActor {
     if (state.status === "off_shift") {
       log({ component: "actor", event: "reserve_attempt", outcome: "rejected", technician_id: state.id, call_ref, job_id, error: "off_shift" });
       return { ok: false, reason: "off_shift" };
+    }
+    // D20: dispatched keeps the technician busy for the whole busy period.
+    if (state.dispatched_for !== undefined) {
+      log({ component: "actor", event: "reserve_attempt", outcome: "rejected", technician_id: state.id, call_ref, job_id, error: "busy" });
+      return { ok: false, reason: "busy" };
     }
     if (state.held_for) {
       if (state.held_for.call_ref === call_ref) {
@@ -119,7 +170,7 @@ export class TechnicianActor extends StatefulActor {
       const next: TechState = { ...state, status: "available", updated_at: Date.now() };
       delete next.held_for;
       await this.ctx.storage.put("state", next);
-      await this.ctx.storage.deleteAlarm();
+      await this._rearm(next);
       log({ component: "actor", event: "release", outcome: "ok", technician_id: state.id, call_ref, job_id });
       return { released: true };
     } catch {
@@ -143,21 +194,101 @@ export class TechnicianActor extends StatefulActor {
     return { booked: true };
   }
 
-  async setShift(on: boolean): Promise<TechState> {
+  // D20: a ringing attempt can outlive the original 90 s hold. Same call_ref
+  // and job_id only; moves the alarm to the new expires_at and never touches
+  // the booked flag, so no false hold_expired is logged.
+  async extendHold(args: {
+    call_ref: string;
+    job_id: string;
+    ttl_s?: number;
+  }): Promise<{ extended: boolean }> {
     const { state } = await this._state();
-    const hadHold = state.held_for !== undefined;
-    const next: TechState = { ...state, status: on ? "available" : "off_shift", updated_at: Date.now() };
+    const ttl = args.ttl_s === undefined ? 60 : args.ttl_s;
+    const valid =
+      typeof args.call_ref === "string" &&
+      args.call_ref.length > 0 &&
+      typeof args.job_id === "string" &&
+      args.job_id.length > 0 &&
+      Number.isInteger(ttl) &&
+      ttl >= 1 &&
+      ttl <= 86400;
+    if (!valid) return { extended: false };
+    if (
+      !state.held_for ||
+      state.held_for.call_ref !== args.call_ref ||
+      state.held_for.job_id !== args.job_id
+    ) {
+      return { extended: false };
+    }
+    state.held_for.expires_at = Date.now() + ttl * 1000;
+    state.updated_at = Date.now();
+    await this.ctx.storage.put("state", state);
+    await this._rearm(state);
+    return { extended: true };
+  }
+
+  // D20: explicit accept only (the reducer is the guard). Clears the hold,
+  // marks the technician dispatched until now + busy_s, and arms the alarm.
+  async dispatch(args: {
+    call_ref: string;
+    job_id: string;
+    busy_s?: number;
+  }): Promise<{ ok: true; until: number } | { ok: false; reason: "invalid_input" }> {
+    const { state } = await this._state();
+    const busy = args.busy_s === undefined ? dispatchBusyS(this.env) : args.busy_s;
+    const valid =
+      typeof args.call_ref === "string" &&
+      args.call_ref.length > 0 &&
+      typeof args.job_id === "string" &&
+      args.job_id.length > 0 &&
+      Number.isInteger(busy) &&
+      busy >= 1 &&
+      busy <= 86400;
+    if (!valid) return { ok: false, reason: "invalid_input" };
+    const now = Date.now();
+    const until = now + busy * 1000;
+    const next: TechState = {
+      ...state,
+      status: "dispatched",
+      dispatched_for: { call_ref: args.call_ref, job_id: args.job_id, until },
+      updated_at: now,
+    };
     delete next.held_for;
     await this.ctx.storage.put("state", next);
-    if (hadHold) await this.ctx.storage.deleteAlarm();
+    await this._rearm(next);
+    log({ component: "actor", event: "tech_dispatched", technician_id: state.id, call_ref: args.call_ref, job_id: args.job_id });
+    return { ok: true, until };
+  }
+
+  // D20: admin/demo escape hatch, frees a dispatched technician early.
+  async clearDispatch(): Promise<{ cleared: boolean }> {
+    const { state } = await this._state();
+    if (!state.dispatched_for) return { cleared: false };
+    const next: TechState = { ...state, updated_at: Date.now() };
+    delete next.dispatched_for;
+    if (next.status === "dispatched") next.status = "available";
+    await this.ctx.storage.put("state", next);
+    await this._rearm(next);
+    return { cleared: true };
+  }
+
+  async setShift(on: boolean): Promise<TechState> {
+    const { state } = await this._state();
+    const hadTimer = state.held_for !== undefined || state.dispatched_for !== undefined;
+    const next: TechState = { ...state, status: on ? "available" : "off_shift", updated_at: Date.now() };
+    delete next.held_for;
+    delete next.dispatched_for;
+    await this.ctx.storage.put("state", next);
+    if (hadTimer) await this.ctx.storage.deleteAlarm();
     return next;
   }
 
-  // Alarm delivery is at-least-once: this must be idempotent.
+  // Alarm delivery is at-least-once: this must be idempotent. Re-arms to
+  // whichever of hold / dispatch expires first.
   async alarm(_info?: AlarmInfo): Promise<void> {
     const { state, cleared } = await this._state();
-    if (state.held_for) {
-      await this.ctx.storage.setAlarm(state.held_for.expires_at);
+    if (state.held_for || state.dispatched_for) {
+      await this._rearm(state);
       return;
     }
     if (cleared) {

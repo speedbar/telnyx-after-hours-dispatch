@@ -136,9 +136,9 @@ test("get returns null on an empty actor", async () => {
 });
 
 // S1.8: open keeps the confirmed caller details and the flags; open also
-// arms the retention alarm; alarm() deletes once and is idempotent.
+// arms the retention alarm; the alarm deletes once and is idempotent.
 test("open stores flags and caller details, sets a retention alarm, alarm deletes once", async () => {
-  const { actor, alarm, deleteCount } = makeActor();
+  const { actor, map, alarm, deleteCount } = makeActor();
   const before = Date.now();
   const r = await actor.open({
     ...openArgs,
@@ -154,6 +154,8 @@ test("open stores flags and caller details, sets a retention alarm, alarm delete
   assert.equal(rec?.contact_phone, "61491570006");
   const at = alarm();
   assert.ok(at !== null && at >= before + 6 * 86_400_000 && at <= Date.now() + 8 * 86_400_000, "retention alarm about 7 days out");
+  // Retention comes due: the alarm deletes exactly once; a repeat is a no-op.
+  map.set("job", { ...(map.get("job") as Record<string, unknown>), retention_at: Date.now() - 1 });
   await actor.alarm();
   assert.equal(await actor.get(), null);
   assert.equal(deleteCount(), 1);
@@ -174,4 +176,81 @@ test("invalid inputs are rejected for open and brief", async () => {
   assert.deepEqual(await actor.brief({ ...briefArgs, details: "" }), { ok: false, reason: "invalid_input" });
   assert.deepEqual(await actor.brief({ ...briefArgs, contact_phone: 5 as unknown as string }), { ok: false, reason: "invalid_input" });
   assert.deepEqual(await actor.brief({ ...briefArgs, hazards: null as unknown as string }), { ok: false, reason: "invalid_input" });
+});
+
+// D20-2: the alarm is multiplexed between the ring start and retention. A due
+// ring start is consumed and never deletes the job; only a due retention does.
+test("multiplexed alarm: ring due consumes ring_at, job kept, re-armed to retention", async () => {
+  const { actor, alarm, deleteCount } = makeActor();
+  await actor.open(openArgs);
+  const ringAt = Date.now() + 10;
+  assert.deepEqual(await actor.setRingAt(ringAt), { ok: true });
+  assert.equal(alarm(), ringAt, "alarm moved up to the ring start");
+  await new Promise((r) => setTimeout(r, 20));
+  await actor.alarm();
+  const rec = await actor.get();
+  assert.ok(rec !== null, "the ring alarm must not delete the job");
+  assert.equal(rec?.ring_at, undefined, "ring_at consumed");
+  assert.equal(deleteCount(), 0);
+  const at = alarm();
+  assert.ok(at !== null && at >= Date.now() + 6 * 86_400_000, "re-armed to retention");
+  // A repeat delivery with nothing due is a harmless no-op.
+  await actor.alarm();
+  assert.equal(deleteCount(), 0);
+  assert.ok((await actor.get()) !== null);
+});
+
+test("multiplexed alarm: nothing deletes before retention is due", async () => {
+  const { actor, deleteCount } = makeActor();
+  await actor.open(openArgs);
+  await actor.alarm();
+  assert.equal(await actor.get() === null, false);
+  assert.equal(deleteCount(), 0);
+});
+
+test("setRingAt on an empty actor or with a bad time is rejected", async () => {
+  const { actor } = makeActor();
+  assert.deepEqual(await actor.setRingAt(Date.now()), { ok: false });
+  await actor.open(openArgs);
+  assert.deepEqual(await actor.setRingAt(NaN), { ok: false });
+});
+
+// D20-2: ringEvent runs the reducer in one read-modify-write: the ring state
+// and any job_state effect (dispatch_state) are stored together.
+test("ringEvent stores the ring state and applies dispatch_state; JobState unchanged", async () => {
+  const { actor } = makeActor();
+  await actor.open(openArgs);
+  const r1 = await actor.ringEvent({ type: "start", mode: "live", candidates: ["tech-01"], now: 1000 });
+  assert.equal(r1.state?.status, "dialing");
+  assert.equal((await actor.get())?.ring?.status, "dialing");
+  await actor.ringEvent({ type: "dial_result", ok: true, call_control_id: "cc1", now: 1001 });
+  const r3 = await actor.ringEvent({ type: "answered", call_control_id: "cc1", event_id: "e1", now: 1002 });
+  assert.equal(r3.state?.status, "prompting");
+  const r4 = await actor.ringEvent({ type: "gather", call_control_id: "cc1", digits: "1", event_id: "e2", now: 1003 });
+  assert.equal(r4.state?.status, "accepted");
+  assert.ok(r4.effects.some((e) => e.type === "job_state" && e.state === "dispatched"));
+  const rec = await actor.get();
+  assert.equal(rec?.dispatch_state, "dispatched");
+  assert.equal(rec?.state, "reserved", "JobState untouched by the ring");
+});
+
+test("ringEvent is idempotent for a duplicate event id", async () => {
+  const { actor } = makeActor();
+  await actor.open(openArgs);
+  await actor.ringEvent({ type: "start", mode: "live", candidates: ["tech-01"], now: 1000 });
+  await actor.ringEvent({ type: "dial_result", ok: true, call_control_id: "cc1", now: 1001 });
+  const r1 = await actor.ringEvent({ type: "answered", call_control_id: "cc1", event_id: "e1", now: 1002 });
+  const before = (await actor.get())?.ring;
+  const r2 = await actor.ringEvent({ type: "answered", call_control_id: "cc1", event_id: "e1", now: 2000 });
+  assert.deepEqual(r2.effects, [{ type: "log", event: "ring_dup_event" }]);
+  assert.equal(r2.state?.status, r1.state?.status);
+  assert.deepEqual((await actor.get())?.ring, before, "stored ring state untouched");
+});
+
+test("ringEvent on an empty actor is a safe no-op", async () => {
+  const { actor } = makeActor();
+  assert.deepEqual(
+    await actor.ringEvent({ type: "start", mode: "live", candidates: ["t1"], now: 0 }),
+    { state: null, effects: [] },
+  );
 });
