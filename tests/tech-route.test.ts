@@ -31,6 +31,7 @@ function makeFakes(throwOn?: string): Fakes {
     release: (args) => record("release", args, { ok: true, released: true }),
     status: () => record("status", undefined, { ok: true, on_shift: true }),
     setShift: (on) => record("setShift", on, { ok: true, on_shift: on }),
+    clearDispatch: () => record("clearDispatch", undefined, { cleared: true }),
   };
   const env: TechEnv = {
     ADMIN_TOKEN: TOKEN,
@@ -164,6 +165,7 @@ test("6. each method reaches the stub by tech_id and returns its result", async 
       { method: "release", args: { call_ref: "cr-1" }, expected: { ok: true, released: true } },
       { method: "status", expected: { ok: true, on_shift: true } },
       { method: "setShift", args: true, expected: { ok: true, on_shift: true } },
+      { method: "clearDispatch", expected: { cleared: true } },
     ];
     for (const c of cases) {
       const body = JSON.stringify({ tech_id: "tech-01", method: c.method, args: c.args });
@@ -177,6 +179,7 @@ test("6. each method reaches the stub by tech_id and returns its result", async 
     assert.deepEqual(byMethod("release")?.args, { call_ref: "cr-1" });
     assert.equal(byMethod("status")?.args, undefined);
     assert.equal(byMethod("setShift")?.args, true);
+    assert.equal(byMethod("clearDispatch")?.args, undefined);
   } finally {
     cap.restore();
   }

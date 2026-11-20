@@ -82,3 +82,16 @@ test("seed rejects an invalid key before writing anything", async () => {
   );
   assert.equal(map.size, 0, "no entry may be written when any key is invalid");
 });
+
+test("bumpCounter increments under a UTC-day key and stops at the cap", async () => {
+  const map = new Map<string, unknown>();
+  const actor = makeActor(map);
+  assert.deepEqual(await actor.bumpCounter("ring", 2), { ok: true, count: 1 });
+  assert.deepEqual(await actor.bumpCounter("ring", 2), { ok: true, count: 2 });
+  assert.deepEqual(await actor.bumpCounter("ring", 2), { ok: false, count: 2 });
+  const day = new Date().toISOString().slice(0, 10);
+  assert.equal(map.get(`count/ring/${day}`), 2, "stored under the UTC-day key");
+  assert.equal(map.size, 1, "over cap writes nothing new");
+  assert.deepEqual(await actor.bumpCounter("ring", 0), { ok: false, count: 0 });
+  assert.deepEqual(await actor.bumpCounter("", 2), { ok: false, count: 0 });
+});

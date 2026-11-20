@@ -1,8 +1,8 @@
 // src/routes/tech.ts
 // POST /admin/tech — guarded admin route that invokes one TechnicianActor
-// method (reserve, release, status, setShift) by tech_id, for ops and the
-// concurrency script. Auth and logging mirror src/routes/seed.ts: the
-// x-admin-token header is compared in constant time and never logged.
+// method (reserve, release, status, setShift, clearDispatch) by tech_id, for
+// ops and the concurrency script. Auth and logging mirror src/routes/seed.ts:
+// the x-admin-token header is compared in constant time and never logged.
 
 import { readConfig } from "../lib/config";
 import { log, newRequestId } from "../lib/log";
@@ -14,6 +14,7 @@ export interface TechStub {
   release(args: unknown): Promise<unknown>;
   status(): Promise<unknown>;
   setShift(on: boolean): Promise<unknown>;
+  clearDispatch(): Promise<unknown>;
 }
 
 export interface TechEnv {
@@ -21,7 +22,7 @@ export interface TechEnv {
   [key: string]: unknown;
 }
 
-type TechMethod = "reserve" | "release" | "status" | "setShift";
+type TechMethod = "reserve" | "release" | "status" | "setShift" | "clearDispatch";
 
 interface TechBody {
   tech_id: string;
@@ -29,7 +30,8 @@ interface TechBody {
   args?: unknown;
 }
 
-// Shape-check { tech_id, method, args? }. status ignores args. Never throws.
+// Shape-check { tech_id, method, args? }. status and clearDispatch ignore
+// args. Never throws.
 function parseBody(raw: unknown): TechBody | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
@@ -43,7 +45,8 @@ function parseBody(raw: unknown): TechBody | null {
     method !== "reserve" &&
     method !== "release" &&
     method !== "status" &&
-    method !== "setShift"
+    method !== "setShift" &&
+    method !== "clearDispatch"
   ) {
     return null;
   }
@@ -115,6 +118,9 @@ export async function handleTech(
         break;
       case "setShift":
         result = await stub.setShift(body.args as boolean);
+        break;
+      case "clearDispatch":
+        result = await stub.clearDispatch();
         break;
     }
     return Response.json({ ok: true, result }, { status: 200 });

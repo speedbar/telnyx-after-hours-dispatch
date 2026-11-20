@@ -101,6 +101,12 @@ export function dialableCallback(raw: unknown): string | null {
   return s;
 }
 
+// Digits -> E.164 for the Telnyx API. Input must already be normalised digits
+// (from normalisePhone / dialableCallback); this adds the plus, nothing more.
+export function toE164(digits: string): string {
+  return "+" + digits;
+}
+
 // Whole-word (case-insensitive) match, so "gaslight" does not match "gas".
 const wordHit = (lower: string, w: string): boolean =>
   new RegExp(`\\b${w}\\b`).test(lower);
