@@ -11,6 +11,7 @@ import { keys } from "../src/lib/kv-keys.js";
 import { isJobId, resolveCallRef } from "../src/lib/validate.js";
 import { TOOLS, type ToolEnv, type ToolResult } from "../src/tools/index.js";
 import { handleMcp, type McpEnv } from "../src/routes/mcp.js";
+import { callerHash } from "../src/lib/log.js";
 
 type DCtor = ConstructorParameters<typeof DirectoryActor>;
 type TCtor = ConstructorParameters<typeof TechnicianActor>;
@@ -589,6 +590,95 @@ test("S1.9: hop timing fields appear on mcp_call; no argument values logged", as
   for (const bad of ["Sam Rivera", "Banksia", "61412000001", "0412 000 001", "Burst pipe under the house"]) {
     assert.ok(!joined.includes(bad), `log leaked argument value: ${bad}`);
   }
+});
+
+// S1.9 item 5 (a)-(d): technician ids, urgency from/to + category, one
+// request_id per tool call, and conv_hash on every MCP line.
+test("S1.9: technician_id, urgency_raised detail, shared request_id and conv_hash", async () => {
+  const TOKEN = "s19-correlation-token-012345678";
+  const env = await seeded();
+  env.MCP_TOKEN = TOKEN;
+  env.LOG_SALT = "tools-salt";
+  const callTool = async (name: string, args: Record<string, unknown>) => {
+    const req = new Request("https://test.invalid/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name,
+          arguments: args,
+          _meta: { telnyx_conversation_id: "conv-shared-1" },
+        },
+      }),
+    });
+    const res = await handleMcp(req, env as McpEnv);
+    assert.equal(res.status, 200);
+    await res.text();
+  };
+  const before = logLines.length;
+  // Gas trade + urgent: applyFloors raises to emergency (floor_reason "gas").
+  await callTool("reserve_technician", {
+    ...validReserve("s19-gas"),
+    trade: "gas",
+    urgency: "urgent",
+    summary: "The heater pilot light keeps going out",
+  });
+  const lines = logLines
+    .slice(before)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const mcpCall = lines.find((l) => l.event === "mcp_call" && l.tool === "reserve_technician");
+  assert.ok(mcpCall, "expected the reserve mcp_call line");
+  const request_id = mcpCall.request_id;
+  assert.match(String(request_id), /^[0-9a-f-]{36}$/);
+  const conv_hash = await callerHash("conv-shared-1", "tools-salt");
+
+  // (a) technician_id on reserve_attempt and mcp_call (id only).
+  assert.equal(mcpCall.technician_id, "tech-01");
+  assert.equal(mcpCall.conv_hash, conv_hash);
+  const attempts = lines.filter((l) => l.event === "reserve_attempt" && l.component === "mcp");
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].technician_id, "tech-01");
+  assert.equal(attempts[0].attempt, 1);
+  assert.equal(attempts[0].eligible_count, 1);
+
+  // (b) urgency_raised: enum from/to and a fixed category, never the summary.
+  const raised = lines.find((l) => l.event === "urgency_raised");
+  assert.ok(raised, "expected an urgency_raised line");
+  assert.equal(raised.urgency_from, "urgent");
+  assert.equal(raised.urgency_to, "emergency");
+  assert.equal(raised.floor_reason, "gas");
+
+  // (c)(d) one request_id and the conv_hash on every line of this tool call.
+  for (const l of [raised, attempts[0], mcpCall]) {
+    assert.equal(l.request_id, request_id, `${l.event} shares the request_id`);
+    assert.equal(l.conv_hash, conv_hash, `${l.event} carries conv_hash`);
+  }
+
+  // No summary text, no raw conversation id, no customer data anywhere.
+  const joined = logLines.slice(before).join("\n");
+  for (const bad of ["pilot light", "The heater", "conv-shared-1", "Sam Rivera", "Banksia", "61412000001"]) {
+    assert.ok(!joined.includes(bad), `log leaked: ${bad}`);
+  }
+
+  // (a) create_job also names the job's technician on its mcp_call line.
+  const before2 = logLines.length;
+  await callTool("create_job", {
+    call_ref: "s19-gas",
+    customer_name: "Sam Rivera",
+    address: "12 Banksia Street",
+    details: "Pilot light out",
+  });
+  const lines2 = logLines
+    .slice(before2)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const created = lines2.find((l) => l.event === "mcp_call" && l.tool === "create_job");
+  assert.ok(created, "expected the create_job mcp_call line");
+  assert.equal(created.technician_id, "tech-01");
+  // Same conversation id -> same conv_hash across tool calls.
+  assert.equal(created.conv_hash, conv_hash);
 });
 
 test("privacy: no customer data in any log line", () => {

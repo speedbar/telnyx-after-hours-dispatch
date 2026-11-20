@@ -29,6 +29,10 @@ const EXPECTED_KEYS = [
   "call_ref_source",
   "eligible_count",
   "flags",
+  "conv_hash",
+  "urgency_from",
+  "urgency_to",
+  "floor_reason",
   "hop_flag_ms",
   "hop_job_get_ms",
   "hop_tech_ms",
@@ -37,7 +41,7 @@ const EXPECTED_KEYS = [
   "hop_brief_ms",
 ];
 
-test("formatLine output parses as JSON with exactly the 26 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 30 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -59,6 +63,10 @@ test("formatLine output parses as JSON with exactly the 26 keys in order", () =>
       call_ref_source: "meta",
       eligible_count: 2,
       flags: "address_short,name_short",
+      conv_hash: "abcdef012345",
+      urgency_from: "urgent",
+      urgency_to: "emergency",
+      floor_reason: "gas",
       hop_flag_ms: 3,
       hop_job_get_ms: 4,
       hop_tech_ms: 500,
@@ -75,6 +83,10 @@ test("formatLine output parses as JSON with exactly the 26 keys in order", () =>
   assert.equal(parsed.call_ref_source, "meta");
   assert.equal(parsed.eligible_count, 2);
   assert.equal(parsed.flags, "address_short,name_short");
+  assert.equal(parsed.conv_hash, "abcdef012345");
+  assert.equal(parsed.urgency_from, "urgent");
+  assert.equal(parsed.urgency_to, "emergency");
+  assert.equal(parsed.floor_reason, "gas");
   assert.equal(parsed.hop_tech_ms, 500);
   assert.equal(parsed.hop_brief_ms, 11);
 });

@@ -27,6 +27,23 @@ const TRADES = ["plumbing", "electrical", "gas", "hvac", "other"] as const;
 // puts the numbers on the mcp_call line. tech_reserve is a SUM across attempts.
 type HopKey = "hop_flag_ms" | "hop_job_get_ms" | "hop_tech_ms" | "hop_job_open_ms";
 
+// urgency_raised floor_reason: a fixed category, never the caller's words.
+const FLOOR_CATEGORIES: ReadonlyArray<[RegExp, string]> = [
+  [/\bgas\b|\bcarbon monoxide\b/, "gas"],
+  [/\bflood(?:ing)?\b/, "flood"],
+  [/\bburst\b|\bsewage\b/, "water"],
+  [/\bsmoke\b|\bfire\b|\bburning\b/, "fire"],
+  [/\bsparks?\b|\bsparking\b|\bshock\b|\belectrocuted\b/, "electrical"],
+];
+function floorReason(summary: string, effectiveTrade: string): string {
+  if (effectiveTrade === "gas") return "gas";
+  const lower = summary.toLowerCase();
+  for (const [re, cat] of FLOOR_CATEGORIES) {
+    if (re.test(lower)) return cat;
+  }
+  return "keyword";
+}
+
 type FailReason = "invalid_input" | "disabled" | "already_closed" | "no_technician_available";
 
 // Every failure is data: same shape, bad_fields names only (never values).
@@ -76,6 +93,9 @@ export async function handleReserveTechnician(
   const hop = (fields: ToolLogCtx): void => {
     if (ctx !== undefined) setToolLogCtx(ctx, fields);
   };
+  // One request_id / conv_hash on every line of this tool call (S1.9 item 5).
+  const logCtx = toolLogCtxOf(ctx);
+  const corr = { request_id: logCtx.request_id, conv_hash: logCtx.conv_hash };
   const time = async <T>(key: HopKey, p: Promise<T>): Promise<T> => {
     const start = Date.now();
     try {
@@ -131,10 +151,19 @@ export async function handleReserveTechnician(
   // stored and used for eligibility. Event names only, never values.
   const floored = applyFloors(trade, urgency, summary);
   if (floored.raised) {
-    log({ component: "mcp", event: "urgency_raised", tool: "reserve_technician", call_ref });
+    log({
+      component: "mcp",
+      event: "urgency_raised",
+      tool: "reserve_technician",
+      call_ref,
+      urgency_from: urgency,
+      urgency_to: floored.urgency as "emergency" | "urgent",
+      floor_reason: floorReason(summary, floored.trade),
+      ...corr,
+    });
   }
   if (floored.corrected) {
-    log({ component: "mcp", event: "trade_corrected", tool: "reserve_technician", call_ref });
+    log({ component: "mcp", event: "trade_corrected", tool: "reserve_technician", call_ref, ...corr });
   }
   // Soft flags: the job is accepted and reviewed by a human later (D19).
   const flags = jobFlags({ customer_name, address, suburb });
@@ -150,12 +179,22 @@ export async function handleReserveTechnician(
   // Replay or continuation of an existing job: refresh the hold idempotently.
   if (job !== null) {
     if (job.state === "released") return fail("already_closed");
+    const attempt = Math.max(1, (TECH_POOL as readonly string[]).indexOf(job.tech_id) + 1);
+    log({
+      component: "mcp",
+      event: "reserve_attempt",
+      tool: "reserve_technician",
+      call_ref,
+      technician_id: job.tech_id,
+      attempt,
+      ...corr,
+    });
     const r = await time(
       "hop_tech_ms",
       tech.idFromName(job.tech_id).reserve({ call_ref, job_id: job.job_id, ttl_s }),
     );
     if (!r.ok) return fail("no_technician_available");
-    const attempt = Math.max(1, (TECH_POOL as readonly string[]).indexOf(job.tech_id) + 1);
+    hop({ technician_id: job.tech_id });
     return success(job.job_id, r.expires_at, attempt);
   }
 
@@ -166,16 +205,21 @@ export async function handleReserveTechnician(
     const profile = TECH_PROFILES[id];
     return profile.trades.includes(floored.trade as Trade);
   });
-  log({
-    component: "mcp",
-    event: "reserve_attempt",
-    tool: "reserve_technician",
-    call_ref,
-    eligible_count: eligible.length,
-  });
 
+  // One reserve_attempt line per attempt (S1.9 item 5a): the technician id is
+  // an id only (tech-01), never a name.
   for (let i = 0; i < eligible.length; i++) {
     const tech_id = eligible[i];
+    log({
+      component: "mcp",
+      event: "reserve_attempt",
+      tool: "reserve_technician",
+      call_ref,
+      technician_id: tech_id,
+      attempt: i + 1,
+      eligible_count: eligible.length,
+      ...corr,
+    });
     const r = await time(
       "hop_tech_ms",
       tech.idFromName(tech_id).reserve({ call_ref, job_id, ttl_s }),
@@ -197,6 +241,7 @@ export async function handleReserveTechnician(
       await tech.idFromName(tech_id).release({ call_ref, job_id });
       return fail(mapOpenReason(opened.reason));
     }
+    hop({ technician_id: tech_id });
     return success(job_id, r.expires_at, i + 1);
   }
   return fail("no_technician_available");

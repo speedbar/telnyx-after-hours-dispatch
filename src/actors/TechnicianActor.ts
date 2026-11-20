@@ -6,7 +6,15 @@ type TechStatus = "available" | "held" | "off_shift";
 interface TechState {
   id: string;
   status: TechStatus;
-  held_for?: { call_ref: string; job_id: string; expires_at: number };
+  // created_at: hold start (hold length = expires_at - created_at). booked:
+  // create_job consumed the reservation — the expiry sweep stays silent.
+  held_for?: {
+    call_ref: string;
+    job_id: string;
+    expires_at: number;
+    created_at?: number;
+    booked?: boolean;
+  };
   updated_at: number;
 }
 
@@ -21,7 +29,10 @@ export class TechnicianActor extends StatefulActor {
     return { pong: true, count };
   }
 
-  // Read state once; lazily clear an expired hold in memory (no write here).
+  // Read state once; lazily clear an expired hold. A lapse logs exactly one
+  // hold_expired line (technician id + hold length in latency_ms): the cleared
+  // state is persisted here so no later read can log it again (S1.9e). A hold
+  // already consumed by create_job (booked) is swept silently.
   private async _state(): Promise<{ state: TechState; cleared: boolean }> {
     const stored = await this.ctx.storage.get<TechState>("state");
     const ctxId = (this.ctx as { id?: unknown }).id;
@@ -33,16 +44,21 @@ export class TechnicianActor extends StatefulActor {
         updated_at: 0,
       } satisfies TechState);
     if (state.held_for && state.held_for.expires_at <= Date.now()) {
-      log({
-        component: "actor",
-        event: "hold_expired",
-        technician_id: state.id,
-        call_ref: state.held_for.call_ref,
-        job_id: state.held_for.job_id,
-      });
+      const held = state.held_for;
+      if (held.booked !== true) {
+        log({
+          component: "actor",
+          event: "hold_expired",
+          technician_id: state.id,
+          call_ref: held.call_ref,
+          job_id: held.job_id,
+          latency_ms: Math.max(0, held.expires_at - (held.created_at ?? state.updated_at)),
+        });
+      }
       delete state.held_for;
       if (state.status === "held") state.status = "available";
       state.updated_at = Date.now();
+      await this.ctx.storage.put("state", state);
       return { state, cleared: true };
     }
     return { state, cleared: false };
@@ -80,12 +96,13 @@ export class TechnicianActor extends StatefulActor {
       log({ component: "actor", event: "reserve_attempt", outcome: "rejected", technician_id: state.id, call_ref, job_id, error: "busy" });
       return { ok: false, reason: "busy" };
     }
-    const expires_at = Date.now() + ttl * 1000;
+    const now = Date.now();
+    const expires_at = now + ttl * 1000;
     await this.ctx.storage.put("state", {
       ...state,
       status: "held",
-      held_for: { call_ref, job_id, expires_at },
-      updated_at: Date.now(),
+      held_for: { call_ref, job_id, expires_at, created_at: now },
+      updated_at: now,
     } satisfies TechState);
     await this.ctx.storage.setAlarm(expires_at);
     log({ component: "actor", event: "reserve_attempt", outcome: "ok", technician_id: state.id, call_ref, job_id });
@@ -111,9 +128,19 @@ export class TechnicianActor extends StatefulActor {
   }
 
   async status(): Promise<TechState> {
-    const { state, cleared } = await this._state();
-    if (cleared) await this.ctx.storage.put("state", state);
+    const { state } = await this._state();
     return state;
+  }
+
+  // create_job consumed this hold: the expiry sweep clears it silently.
+  async markBooked(args: { call_ref: string; job_id: string }): Promise<{ booked: boolean }> {
+    const { state } = await this._state();
+    if (!state.held_for || state.held_for.call_ref !== args.call_ref || state.held_for.job_id !== args.job_id) {
+      return { booked: false };
+    }
+    state.held_for.booked = true;
+    await this.ctx.storage.put("state", state);
+    return { booked: true };
   }
 
   async setShift(on: boolean): Promise<TechState> {
@@ -134,7 +161,6 @@ export class TechnicianActor extends StatefulActor {
       return;
     }
     if (cleared) {
-      await this.ctx.storage.put("state", state);
       await this.ctx.storage.deleteAlarm();
     }
   }

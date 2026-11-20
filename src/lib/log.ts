@@ -30,6 +30,10 @@ export interface LogFields {
   call_ref_source?: "meta" | "args" | "none";
   eligible_count?: number; // technician pool size after trade eligibility (count only)
   flags?: string; // comma-joined soft-validation flag names, names only
+  conv_hash?: string; // 12 hex, salted hash of the Telnyx conversation id
+  urgency_from?: "emergency" | "urgent"; // urgency_raised: enum values only
+  urgency_to?: "emergency" | "urgent";
+  floor_reason?: string; // fixed floor category (gas, flood, ...), never caller words
   hop_flag_ms?: number; // S1.9: per-hop timings (Date.now() differences)
   hop_job_get_ms?: number;
   hop_tech_ms?: number;
@@ -68,6 +72,10 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     call_ref_source: fields.call_ref_source ?? null,
     eligible_count: fields.eligible_count ?? null,
     flags: fields.flags ?? null,
+    conv_hash: fields.conv_hash ?? null,
+    urgency_from: fields.urgency_from ?? null,
+    urgency_to: fields.urgency_to ?? null,
+    floor_reason: fields.floor_reason ?? null,
     hop_flag_ms: fields.hop_flag_ms ?? null,
     hop_job_get_ms: fields.hop_job_get_ms ?? null,
     hop_tech_ms: fields.hop_tech_ms ?? null,

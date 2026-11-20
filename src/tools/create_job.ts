@@ -4,7 +4,7 @@
 // the TechnicianActor must not have expired. A replay after "briefed" skips
 // the hold check. Failures as data; no customer data in error strings.
 
-import { log, setToolLogCtx, type ToolLogCtx } from "../lib/log.js";
+import { log, setToolLogCtx, toolLogCtxOf, type ToolLogCtx } from "../lib/log.js";
 import {
   cleanText,
   normalisePhone,
@@ -107,10 +107,16 @@ export async function handleCreateJob(
     return fail("no_active_reservation");
   }
   const job_id = job.job_id;
+  // The job has a technician: the id (never a name) goes on the mcp_call line.
+  if (ctx !== undefined) setToolLogCtx(ctx, { technician_id: job.tech_id });
+  const corr = ((): { request_id?: string; conv_hash?: string } => {
+    const c = toolLogCtxOf(ctx);
+    return { request_id: c.request_id, conv_hash: c.conv_hash };
+  })();
   // Already briefed (S1.8): first write wins. Return the same success result
   // and never overwrite the stored details.
   if (job.state === "briefed") {
-    log({ component: "mcp", event: "brief_replay", tool: "create_job", call_ref, job_id });
+    log({ component: "mcp", event: "brief_replay", tool: "create_job", call_ref, job_id, ...corr });
     return { ok: true, job_id, reference_spoken: spoken(job_id) };
   }
   if (job.state === "reserved") {
@@ -138,6 +144,14 @@ export async function handleCreateJob(
   }));
   if (!briefed.ok) {
     return fail(briefed.reason === "invalid_input" ? "invalid_input" : "no_active_reservation");
+  }
+  if (job.state === "reserved") {
+    // The reservation became a booked job: mark the hold so the later alarm
+    // sweep clears it silently instead of logging a false hold_expired (S1.9e).
+    const stub = tech.idFromName(job.tech_id) as unknown as {
+      markBooked?: (a: { call_ref: string; job_id: string }) => Promise<unknown>;
+    };
+    await stub.markBooked?.({ call_ref, job_id });
   }
   return { ok: true, job_id, reference_spoken: spoken(job_id) };
 }

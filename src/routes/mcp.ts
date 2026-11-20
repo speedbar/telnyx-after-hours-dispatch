@@ -7,8 +7,10 @@
 
 import { readConfig } from "../lib/config";
 import {
+  callerHash,
   log,
   newRequestId,
+  setToolLogCtx,
   timed,
   toolLogCtxOf,
   type LogFields,
@@ -191,6 +193,21 @@ async function handleToolCall(
       ctx.meta_conversation_id = altId;
     }
   }
+  // conv_hash (S1.9 item 5d): salted hash of the Telnyx conversation id from
+  // _meta, same salt and method as caller_hash, null when there is no id.
+  // The raw id is never logged. Handlers read request_id/conv_hash off the
+  // tool-call ctx so every line of one tool call shares them (item 5c).
+  const salt = readConfig(env, "LOG_SALT");
+  const convId = meta?.telnyx_conversation_id;
+  const conv_hash =
+    typeof convId === "string" && convId !== "" && salt !== undefined
+      ? await callerHash(convId, salt)
+      : undefined;
+  setToolLogCtx(ctx, {
+    request_id,
+    ...(conv_hash !== undefined ? { conv_hash } : {}),
+  });
+
   // Resolved once here for the log line; handlers resolve the same value
   // (deterministic hash). The safe "c:" ref is logged even for rejected calls.
   const resolved = await resolveCallRef(args, ctx);
@@ -220,6 +237,9 @@ async function handleToolCall(
     const v = tlc[key];
     if (typeof v === "number") fields[key] = v;
   }
+  // The technician the tool reserved (or the job's technician): id only.
+  if (typeof tlc.technician_id === "string") fields.technician_id = tlc.technician_id;
+  if (conv_hash !== undefined) fields.conv_hash = conv_hash;
 
   if (run.threw) {
     fields.outcome = "fail";
