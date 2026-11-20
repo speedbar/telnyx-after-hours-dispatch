@@ -30,6 +30,12 @@ export interface LogFields {
   call_ref_source?: "meta" | "args" | "none";
   eligible_count?: number; // technician pool size after trade eligibility (count only)
   flags?: string; // comma-joined soft-validation flag names, names only
+  hop_flag_ms?: number; // S1.9: per-hop timings (Date.now() differences)
+  hop_job_get_ms?: number;
+  hop_tech_ms?: number;
+  hop_job_open_ms?: number;
+  hop_tech_status_ms?: number;
+  hop_brief_ms?: number;
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -39,7 +45,7 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
       : fields.error.length > 300
         ? fields.error.slice(0, 300)
         : fields.error;
-  // Key order below is part of the contract: exactly these 20 keys,
+  // Key order below is part of the contract: exactly these keys,
   // in this order, with null for anything not supplied.
   return JSON.stringify({
     ts: now.toISOString(),
@@ -62,7 +68,38 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     call_ref_source: fields.call_ref_source ?? null,
     eligible_count: fields.eligible_count ?? null,
     flags: fields.flags ?? null,
+    hop_flag_ms: fields.hop_flag_ms ?? null,
+    hop_job_get_ms: fields.hop_job_get_ms ?? null,
+    hop_tech_ms: fields.hop_tech_ms ?? null,
+    hop_job_open_ms: fields.hop_job_open_ms ?? null,
+    hop_tech_status_ms: fields.hop_tech_status_ms ?? null,
+    hop_brief_ms: fields.hop_brief_ms ?? null,
   });
+}
+
+// Per-tool-call log context (S1.9): carried on the opaque ctx object via a
+// WeakMap so the ctx shape handlers (and tests) see is unchanged. Ids and
+// numbers only, never argument values.
+export interface ToolLogCtx {
+  request_id?: string;
+  conv_hash?: string;
+  technician_id?: string;
+  hop_flag_ms?: number;
+  hop_job_get_ms?: number;
+  hop_tech_ms?: number;
+  hop_job_open_ms?: number;
+  hop_tech_status_ms?: number;
+  hop_brief_ms?: number;
+}
+const toolLogCtx = new WeakMap<object, ToolLogCtx>();
+
+export function setToolLogCtx(ctx: object, fields: ToolLogCtx): void {
+  toolLogCtx.set(ctx, { ...toolLogCtx.get(ctx), ...fields });
+}
+
+export function toolLogCtxOf(ctx: object | undefined): ToolLogCtx {
+  if (ctx === undefined || ctx === null || typeof ctx !== "object") return {};
+  return toolLogCtx.get(ctx) ?? {};
 }
 
 export function log(fields: LogFields): void {

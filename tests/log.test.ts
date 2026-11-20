@@ -29,9 +29,15 @@ const EXPECTED_KEYS = [
   "call_ref_source",
   "eligible_count",
   "flags",
+  "hop_flag_ms",
+  "hop_job_get_ms",
+  "hop_tech_ms",
+  "hop_job_open_ms",
+  "hop_tech_status_ms",
+  "hop_brief_ms",
 ];
 
-test("formatLine output parses as JSON with exactly the 20 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 26 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -53,6 +59,12 @@ test("formatLine output parses as JSON with exactly the 20 keys in order", () =>
       call_ref_source: "meta",
       eligible_count: 2,
       flags: "address_short,name_short",
+      hop_flag_ms: 3,
+      hop_job_get_ms: 4,
+      hop_tech_ms: 500,
+      hop_job_open_ms: 30,
+      hop_tech_status_ms: 9,
+      hop_brief_ms: 11,
     },
     new Date("2026-11-18T00:00:00.000Z"),
   );
@@ -63,6 +75,8 @@ test("formatLine output parses as JSON with exactly the 20 keys in order", () =>
   assert.equal(parsed.call_ref_source, "meta");
   assert.equal(parsed.eligible_count, 2);
   assert.equal(parsed.flags, "address_short,name_short");
+  assert.equal(parsed.hop_tech_ms, 500);
+  assert.equal(parsed.hop_brief_ms, 11);
 });
 
 test("minimal fields: level defaults to info, every other field is null", () => {

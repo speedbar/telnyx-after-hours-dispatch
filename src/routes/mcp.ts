@@ -6,7 +6,13 @@
 // Never logs tokens, header values, arguments, names or phone numbers.
 
 import { readConfig } from "../lib/config";
-import { log, newRequestId, timed, type LogFields } from "../lib/log";
+import {
+  log,
+  newRequestId,
+  timed,
+  toolLogCtxOf,
+  type LogFields,
+} from "../lib/log";
 import { resolveCallRef } from "../lib/validate";
 import {
   TOOLS,
@@ -138,6 +144,17 @@ type RunOutcome =
   | { threw: false; output: ToolResult }
   | { threw: true; errName: string };
 
+// S1.9: numeric hop timings a tool stashed on its ctx are copied onto the
+// mcp_call line. Numbers only, never argument values.
+const HOP_KEYS = [
+  "hop_flag_ms",
+  "hop_job_get_ms",
+  "hop_tech_ms",
+  "hop_job_open_ms",
+  "hop_tech_status_ms",
+  "hop_brief_ms",
+] as const;
+
 // tools/call: dispatch to the registry handler and log one mcp_call line
 // whatever the outcome. The handler runs inside timed() (src/lib/log.ts).
 async function handleToolCall(
@@ -198,6 +215,11 @@ async function handleToolCall(
     call_ref_source: resolved.source,
     meta_keys: meta === undefined ? undefined : Object.keys(meta).join(","),
   };
+  const tlc = toolLogCtxOf(ctx);
+  for (const key of HOP_KEYS) {
+    const v = tlc[key];
+    if (typeof v === "number") fields[key] = v;
+  }
 
   if (run.threw) {
     fields.outcome = "fail";

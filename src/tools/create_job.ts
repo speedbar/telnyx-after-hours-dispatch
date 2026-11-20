@@ -4,7 +4,7 @@
 // the TechnicianActor must not have expired. A replay after "briefed" skips
 // the hold check. Failures as data; no customer data in error strings.
 
-import { log } from "../lib/log.js";
+import { log, setToolLogCtx, type ToolLogCtx } from "../lib/log.js";
 import {
   cleanText,
   normalisePhone,
@@ -12,6 +12,32 @@ import {
   spoken,
 } from "../lib/validate";
 import type { ToolCtx, ToolEnv, ToolResult } from "./index";
+
+// S1.9 (BUG-005): per-hop latency, same pattern as reserve_technician.
+type HopKey = "hop_job_get_ms" | "hop_tech_status_ms" | "hop_brief_ms";
+
+// Write one hop timing to the log context (no-op when called without ctx).
+async function timed2<T>(
+  key: HopKey,
+  ctx: ToolCtx | undefined,
+  p: Promise<T>,
+): Promise<T> {
+  const start = Date.now();
+  try {
+    return await p;
+  } finally {
+    if (ctx !== undefined) {
+      const d = Date.now() - start;
+      const fields: ToolLogCtx =
+        key === "hop_job_get_ms"
+          ? { hop_job_get_ms: d }
+          : key === "hop_tech_status_ms"
+            ? { hop_tech_status_ms: d }
+            : { hop_brief_ms: d };
+      setToolLogCtx(ctx, fields);
+    }
+  }
+}
 
 type FailReason = "invalid_input" | "no_active_reservation" | "hold_expired";
 
@@ -76,7 +102,7 @@ export async function handleCreateJob(
   const hazards = hazardsRaw;
 
   const jobsStub = jobs.idFromName(call_ref);
-  const job = await jobsStub.get();
+  const job = await timed2("hop_job_get_ms", ctx, jobsStub.get());
   if (job === null || job.state === "released") {
     return fail("no_active_reservation");
   }
@@ -88,7 +114,7 @@ export async function handleCreateJob(
     return { ok: true, job_id, reference_spoken: spoken(job_id) };
   }
   if (job.state === "reserved") {
-    const s = await tech.idFromName(job.tech_id).status();
+    const s = await timed2("hop_tech_status_ms", ctx, tech.idFromName(job.tech_id).status());
     const h = s.held_for;
     if (
       h === undefined ||
@@ -102,14 +128,14 @@ export async function handleCreateJob(
 
   // The JobActor keeps the callback stored at reservation (first confirmed
   // wins) and drops "none"-style hazards, so pass both through as-is.
-  const briefed = await jobsStub.brief({
+  const briefed = await timed2("hop_brief_ms", ctx, jobsStub.brief({
     job_id,
     customer_name,
     address,
     ...(contact_phone === undefined ? {} : { contact_phone }),
     details,
     ...(hazards === undefined ? {} : { hazards }),
-  });
+  }));
   if (!briefed.ok) {
     return fail(briefed.reason === "invalid_input" ? "invalid_input" : "no_active_reservation");
   }

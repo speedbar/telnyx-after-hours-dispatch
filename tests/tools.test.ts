@@ -10,6 +10,7 @@ import { JobActor } from "../src/actors/JobActor.js";
 import { keys } from "../src/lib/kv-keys.js";
 import { isJobId, resolveCallRef } from "../src/lib/validate.js";
 import { TOOLS, type ToolEnv, type ToolResult } from "../src/tools/index.js";
+import { handleMcp, type McpEnv } from "../src/routes/mcp.js";
 
 type DCtor = ConstructorParameters<typeof DirectoryActor>;
 type TCtor = ConstructorParameters<typeof TechnicianActor>;
@@ -537,6 +538,57 @@ test("invalid_input for every tool", async () => {
     ),
     fail("invalid_input", ["reason"]),
   );
+});
+
+// S1.9 (BUG-005): the hop timings measured inside the tools land on the
+// route's mcp_call line as numbers; never any argument values.
+test("S1.9: hop timing fields appear on mcp_call; no argument values logged", async () => {
+  const TOKEN = "s19-instrument-token-0123456789";
+  const env = await seeded();
+  env.MCP_TOKEN = TOKEN;
+  const callTool = async (name: string, args: Record<string, unknown>) => {
+    const req = new Request("https://test.invalid/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    const res = await handleMcp(req, env as McpEnv);
+    assert.equal(res.status, 200);
+    await res.text();
+  };
+  const before = logLines.length;
+  await callTool("reserve_technician", validReserve("hop-1"));
+  await callTool("create_job", {
+    call_ref: "hop-1",
+    customer_name: "Sam Rivera",
+    address: "12 Banksia Street",
+    details: "Burst pipe under the house",
+  });
+  const lines = logLines
+    .slice(before)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const reserve = lines.find((l) => l.event === "mcp_call" && l.tool === "reserve_technician");
+  const created = lines.find((l) => l.event === "mcp_call" && l.tool === "create_job");
+  assert.ok(reserve && created, "expected mcp_call lines for both tools");
+  for (const k of ["hop_flag_ms", "hop_job_get_ms", "hop_tech_ms", "hop_job_open_ms"]) {
+    assert.equal(typeof reserve[k], "number", `${k} must be a number on the reserve mcp_call`);
+    assert.ok((reserve[k] as number) >= 0);
+  }
+  for (const k of ["hop_job_get_ms", "hop_tech_status_ms", "hop_brief_ms"]) {
+    assert.equal(typeof created[k], "number", `${k} must be a number on the create_job mcp_call`);
+    assert.ok((created[k] as number) >= 0);
+  }
+  // The tool-call total stays in latency_ms.
+  assert.equal(typeof reserve.latency_ms, "number");
+  const joined = logLines.slice(before).join("\n");
+  for (const bad of ["Sam Rivera", "Banksia", "61412000001", "0412 000 001", "Burst pipe under the house"]) {
+    assert.ok(!joined.includes(bad), `log leaked argument value: ${bad}`);
+  }
 });
 
 test("privacy: no customer data in any log line", () => {
