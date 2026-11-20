@@ -3,6 +3,7 @@ import { handleDv } from "./routes/dv";
 import { handleMcp } from "./routes/mcp";
 import { handleSeed } from "./routes/seed";
 import { handleTech } from "./routes/tech";
+import { handleEgressTest } from "./routes/egresstest";
 
 // Re-export the actor classes from the entry point so they are bundled and
 // shipped with the function (the runtime resolves each [[actors]] type here;
@@ -43,6 +44,11 @@ export default {
     if (url.pathname === "/admin/tech") {
       // Same spread pattern as /admin/seed. Token check inside handleTech.
       return await handleTech(req, { ...env });
+    }
+    if (url.pathname === "/admin/egress-test") {
+      // TEMPORARY (removed in D20-3): D20-0 spike route. Same spread
+      // pattern as /admin/tech. Token check inside handleEgressTest.
+      return await handleEgressTest(req, { ...env });
     }
     return Response.json({ ok: false, error: "not_found" }, { status: 404 });
   },
