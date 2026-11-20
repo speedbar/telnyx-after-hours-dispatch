@@ -4,7 +4,7 @@
 // the TechnicianActor must not have expired. A replay after "briefed" skips
 // the hold check. Failures as data; no customer data in error strings.
 
-import { log } from "../lib/log.js";
+import { log, setToolLogCtx, toolLogCtxOf, type ToolLogCtx } from "../lib/log.js";
 import {
   cleanText,
   normalisePhone,
@@ -12,6 +12,22 @@ import {
   spoken,
 } from "../lib/validate";
 import type { ToolCtx, ToolEnv, ToolResult } from "./index";
+
+// S1.9 (BUG-005): per-hop latency, same pattern as reserve_technician.
+// Time one awaited hop and write the resulting field(s) to the log context
+// (no-op when called without ctx).
+async function timed2<T>(
+  ctx: ToolCtx | undefined,
+  p: Promise<T>,
+  fields: (d: number) => ToolLogCtx,
+): Promise<T> {
+  const start = Date.now();
+  try {
+    return await p;
+  } finally {
+    if (ctx !== undefined) setToolLogCtx(ctx, fields(Date.now() - start));
+  }
+}
 
 type FailReason = "invalid_input" | "no_active_reservation" | "hold_expired";
 
@@ -76,19 +92,25 @@ export async function handleCreateJob(
   const hazards = hazardsRaw;
 
   const jobsStub = jobs.idFromName(call_ref);
-  const job = await jobsStub.get();
+  const job = await timed2(ctx, jobsStub.get(), (d) => ({ hop_job_get_ms: d }));
   if (job === null || job.state === "released") {
     return fail("no_active_reservation");
   }
   const job_id = job.job_id;
+  // The job has a technician: the id (never a name) goes on the mcp_call line.
+  if (ctx !== undefined) setToolLogCtx(ctx, { technician_id: job.tech_id });
+  const corr = ((): { request_id?: string; conv_hash?: string } => {
+    const c = toolLogCtxOf(ctx);
+    return { request_id: c.request_id, conv_hash: c.conv_hash };
+  })();
   // Already briefed (S1.8): first write wins. Return the same success result
   // and never overwrite the stored details.
   if (job.state === "briefed") {
-    log({ component: "mcp", event: "brief_replay", tool: "create_job", call_ref, job_id });
+    log({ component: "mcp", event: "brief_replay", tool: "create_job", call_ref, job_id, ...corr });
     return { ok: true, job_id, reference_spoken: spoken(job_id) };
   }
   if (job.state === "reserved") {
-    const s = await tech.idFromName(job.tech_id).status();
+    const s = await timed2(ctx, tech.idFromName(job.tech_id).status(), (d) => ({ hop_tech_status_ms: d }));
     const h = s.held_for;
     if (
       h === undefined ||
@@ -102,16 +124,46 @@ export async function handleCreateJob(
 
   // The JobActor keeps the callback stored at reservation (first confirmed
   // wins) and drops "none"-style hazards, so pass both through as-is.
-  const briefed = await jobsStub.brief({
+  // The brief RPC IS the job write/update: kept under both hop names for
+  // continuity with the S1.9 logs (S1.9b).
+  const briefed = await timed2(ctx, jobsStub.brief({
     job_id,
     customer_name,
     address,
     ...(contact_phone === undefined ? {} : { contact_phone }),
     details,
     ...(hazards === undefined ? {} : { hazards }),
-  });
+  }), (d) => ({ hop_brief_ms: d, hop_job_write_ms: d }));
   if (!briefed.ok) {
     return fail(briefed.reason === "invalid_input" ? "invalid_input" : "no_active_reservation");
+  }
+  if (job.state === "reserved") {
+    // The reservation became a booked job: mark the hold so the later alarm
+    // sweep clears it silently instead of logging a false hold_expired (S1.9e).
+    // A failure here must not fail the call — the job is already briefed.
+    // Error category only, never the message (it may embed values).
+    const markStart = Date.now();
+    try {
+      const stub = tech.idFromName(job.tech_id) as unknown as {
+        markBooked?: (a: { call_ref: string; job_id: string }) => Promise<unknown>;
+      };
+      await stub.markBooked?.({ call_ref, job_id });
+    } catch (err) {
+      log({
+        component: "mcp",
+        event: "mark_booked_failed",
+        level: "warn",
+        tool: "create_job",
+        call_ref,
+        job_id,
+        error: err instanceof Error ? err.name : "unknown",
+        ...corr,
+      });
+    } finally {
+      if (ctx !== undefined) {
+        setToolLogCtx(ctx, { hop_mark_booked_ms: Date.now() - markStart });
+      }
+    }
   }
   return { ok: true, job_id, reference_spoken: spoken(job_id) };
 }

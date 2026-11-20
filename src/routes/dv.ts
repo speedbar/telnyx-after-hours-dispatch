@@ -9,7 +9,7 @@
 // signature or any secret — only the salted caller_hash.
 
 import { readConfig } from "../lib/config";
-import { callerHash, log, newRequestId, timed } from "../lib/log";
+import { bootFields, callerHash, log, newRequestId, timed } from "../lib/log";
 import { verifyTelnyx } from "../lib/sig";
 import { spoken } from "../lib/validate";
 
@@ -118,7 +118,23 @@ export async function handleDv(
   }
 
   const rawBody = await request.text(); // read once
-  log({ component: "dv", event: "dv_in", request_id });
+  // conv_hash (S1.9 item 5d): salted hash of the Telnyx conversation id in the
+  // payload, same salt and method as caller_hash, null when there is no id.
+  // Computed before the signature check so every /dv line can be correlated;
+  // the raw id is never logged. A non-JSON body degrades later as before.
+  let conv_hash: string | undefined;
+  try {
+    const p = (JSON.parse(rawBody) as { data?: { payload?: Record<string, unknown> } | undefined })
+      ?.data?.payload;
+    const convId = p?.telnyx_conversation_id;
+    const salt = readConfig(env, "LOG_SALT");
+    if (typeof convId === "string" && convId !== "" && salt !== undefined) {
+      conv_hash = await callerHash(convId, salt);
+    }
+  } catch {
+    // Not JSON (or an odd shape): the main flow turns this into dv_degraded.
+  }
+  log({ component: "dv", event: "dv_in", request_id, conv_hash, ...bootFields() });
 
   const publicKey = readConfig(env, "TELNYX_PUBLIC_KEY");
   if (publicKey === undefined) {
@@ -127,6 +143,7 @@ export async function handleDv(
       event: "sig_fail",
       level: "error",
       request_id,
+      conv_hash,
       outcome: "rejected",
       error: "no_public_key",
     });
@@ -147,6 +164,7 @@ export async function handleDv(
       event: "sig_fail",
       level: "warn",
       request_id,
+      conv_hash,
       outcome: "rejected",
       error: result.reason,
     });
@@ -162,6 +180,7 @@ export async function handleDv(
       event: "fallback_number_unset",
       level: "warn",
       request_id,
+      conv_hash,
     });
   }
   let call_ref = randomRef();
@@ -213,6 +232,7 @@ export async function handleDv(
         request_id,
         call_ref,
         caller_hash,
+        conv_hash,
         tool: "actor.lookup",
         outcome: "ok",
         latency_ms: lookup.latency_ms,
@@ -225,6 +245,7 @@ export async function handleDv(
         request_id,
         call_ref,
         caller_hash,
+        conv_hash,
         tool: "actor.lookup",
         outcome: "fail",
         latency_ms: Math.max(0, Math.round(performance.now() - lookupStartedAt)),
@@ -250,6 +271,7 @@ export async function handleDv(
           request_id,
           call_ref,
           caller_hash,
+          conv_hash,
         });
       }
     }
@@ -271,6 +293,7 @@ export async function handleDv(
       request_id,
       call_ref,
       caller_hash,
+      conv_hash,
       outcome: "ok",
       latency_ms: latencyMs(),
     });
@@ -286,6 +309,7 @@ export async function handleDv(
       request_id,
       call_ref,
       caller_hash,
+      conv_hash,
       outcome: "degraded",
       error: lookupErrorName(err),
     });
@@ -305,6 +329,7 @@ export async function handleDv(
       request_id,
       call_ref,
       caller_hash,
+      conv_hash,
       outcome: "degraded",
       latency_ms: latencyMs(),
     });

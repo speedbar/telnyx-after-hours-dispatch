@@ -6,7 +6,16 @@
 // Never logs tokens, header values, arguments, names or phone numbers.
 
 import { readConfig } from "../lib/config";
-import { log, newRequestId, timed, type LogFields } from "../lib/log";
+import {
+  bootFields,
+  callerHash,
+  log,
+  newRequestId,
+  setToolLogCtx,
+  timed,
+  toolLogCtxOf,
+  type LogFields,
+} from "../lib/log";
 import { resolveCallRef } from "../lib/validate";
 import {
   TOOLS,
@@ -138,6 +147,19 @@ type RunOutcome =
   | { threw: false; output: ToolResult }
   | { threw: true; errName: string };
 
+// S1.9: numeric hop timings a tool stashed on its ctx are copied onto the
+// mcp_call line. Numbers only, never argument values.
+const HOP_KEYS = [
+  "hop_flag_ms",
+  "hop_job_get_ms",
+  "hop_tech_ms",
+  "hop_job_open_ms",
+  "hop_tech_status_ms",
+  "hop_brief_ms",
+  "hop_mark_booked_ms",
+  "hop_job_write_ms",
+] as const;
+
 // tools/call: dispatch to the registry handler and log one mcp_call line
 // whatever the outcome. The handler runs inside timed() (src/lib/log.ts).
 async function handleToolCall(
@@ -174,6 +196,21 @@ async function handleToolCall(
       ctx.meta_conversation_id = altId;
     }
   }
+  // conv_hash (S1.9 item 5d): salted hash of the Telnyx conversation id from
+  // _meta, same salt and method as caller_hash, null when there is no id.
+  // The raw id is never logged. Handlers read request_id/conv_hash off the
+  // tool-call ctx so every line of one tool call shares them (item 5c).
+  const salt = readConfig(env, "LOG_SALT");
+  const convId = meta?.telnyx_conversation_id;
+  const conv_hash =
+    typeof convId === "string" && convId !== "" && salt !== undefined
+      ? await callerHash(convId, salt)
+      : undefined;
+  setToolLogCtx(ctx, {
+    request_id,
+    ...(conv_hash !== undefined ? { conv_hash } : {}),
+  });
+
   // Resolved once here for the log line; handlers resolve the same value
   // (deterministic hash). The safe "c:" ref is logged even for rejected calls.
   const resolved = await resolveCallRef(args, ctx);
@@ -198,6 +235,20 @@ async function handleToolCall(
     call_ref_source: resolved.source,
     meta_keys: meta === undefined ? undefined : Object.keys(meta).join(","),
   };
+  const tlc = toolLogCtxOf(ctx);
+  for (const key of HOP_KEYS) {
+    const v = tlc[key];
+    if (typeof v === "number") fields[key] = v;
+  }
+  // The technician the tool reserved (or the job's technician): id only.
+  if (typeof tlc.technician_id === "string") fields.technician_id = tlc.technician_id;
+  if (conv_hash !== undefined) fields.conv_hash = conv_hash;
+  // S1.9b diagnostics: flag source, pool size and instance boot facts.
+  if (typeof tlc.flag_source === "string") fields.flag_source = tlc.flag_source;
+  if (typeof tlc.eligible_count === "number") fields.eligible_count = tlc.eligible_count;
+  const boot = bootFields();
+  fields.boot_age_ms = boot.boot_age_ms;
+  fields.first_request = boot.first_request;
 
   if (run.threw) {
     fields.outcome = "fail";

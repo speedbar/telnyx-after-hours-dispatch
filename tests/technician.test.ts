@@ -92,6 +92,50 @@ test("a hold expires: status is available and alarm() is idempotent", async () =
   assert.equal((await actor.reserve({ call_ref: "c2", job_id: "j2" })).ok, true);
 });
 
+// S1.9 item 5e: a lapsed hold emits exactly one hold_expired line (technician
+// id + hold length in latency_ms); booked or still-active holds stay silent.
+test("hold_expired: logged once on lapse with hold length; silent when booked or active", async () => {
+  const logged: string[] = [];
+  const prev = console.log; // the file-wide muted logger
+  console.log = (m: unknown) => logged.push(String(m));
+  const lapseLines = () =>
+    logged
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.event === "hold_expired");
+  try {
+    // Lapsed, unconsumed hold: exactly one line, even across repeat reads.
+    const a = makeActor();
+    await a.actor.reserve({ call_ref: "hx-1", job_id: "jh-1", ttl_s: 1 });
+    await new Promise((r) => setTimeout(r, 1100));
+    await a.actor.alarm();
+    await a.actor.alarm();
+    await a.actor.status();
+    assert.equal(lapseLines().length, 1, `expected one hold_expired, got: ${logged.join("\n")}`);
+    assert.equal(lapseLines()[0].technician_id, "tech");
+    assert.equal(lapseLines()[0].latency_ms, 1000, "hold length in latency_ms");
+
+    // Booked (consumed by create_job): the sweep clears silently.
+    logged.length = 0;
+    const b = makeActor();
+    await b.actor.reserve({ call_ref: "hx-2", job_id: "jh-2", ttl_s: 1 });
+    assert.deepEqual(await b.actor.markBooked({ call_ref: "hx-2", job_id: "jh-2" }), { booked: true });
+    await new Promise((r) => setTimeout(r, 1100));
+    await b.actor.alarm();
+    assert.equal(lapseLines().length, 0);
+    assert.equal((await b.actor.status()).status, "available");
+
+    // Still-active hold: the alarm only re-arms.
+    logged.length = 0;
+    const c = makeActor();
+    await c.actor.reserve({ call_ref: "hx-3", job_id: "jh-3", ttl_s: 30 });
+    await c.actor.alarm();
+    assert.equal(lapseLines().length, 0);
+    assert.equal((await c.actor.status()).status, "held");
+  } finally {
+    console.log = prev;
+  }
+});
+
 test("off_shift blocks reserve; setShift(true) re-enables it", async () => {
   const { actor } = makeActor();
   const off = await actor.setShift(false);

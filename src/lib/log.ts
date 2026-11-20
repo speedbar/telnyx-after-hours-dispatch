@@ -30,6 +30,21 @@ export interface LogFields {
   call_ref_source?: "meta" | "args" | "none";
   eligible_count?: number; // technician pool size after trade eligibility (count only)
   flags?: string; // comma-joined soft-validation flag names, names only
+  conv_hash?: string; // 12 hex, salted hash of the Telnyx conversation id
+  urgency_from?: "emergency" | "urgent"; // urgency_raised: enum values only
+  urgency_to?: "emergency" | "urgent";
+  floor_reason?: string; // fixed floor category (gas, flood, ...), never caller words
+  hop_flag_ms?: number; // S1.9: per-hop timings (Date.now() differences)
+  hop_job_get_ms?: number;
+  hop_tech_ms?: number;
+  hop_job_open_ms?: number;
+  hop_tech_status_ms?: number;
+  hop_brief_ms?: number;
+  hop_mark_booked_ms?: number; // S1.9b
+  hop_job_write_ms?: number; // S1.9b: same await as hop_brief_ms (the job write)
+  flag_source?: "kv" | "cache" | "default" | "timeout"; // S1.9b: where the flag came from
+  boot_age_ms?: number; // S1.9b: ms since this instance's module boot
+  first_request?: boolean; // S1.9b: true exactly once per instance
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -39,7 +54,7 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
       : fields.error.length > 300
         ? fields.error.slice(0, 300)
         : fields.error;
-  // Key order below is part of the contract: exactly these 20 keys,
+  // Key order below is part of the contract: exactly these keys,
   // in this order, with null for anything not supplied.
   return JSON.stringify({
     ts: now.toISOString(),
@@ -62,7 +77,51 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     call_ref_source: fields.call_ref_source ?? null,
     eligible_count: fields.eligible_count ?? null,
     flags: fields.flags ?? null,
+    conv_hash: fields.conv_hash ?? null,
+    urgency_from: fields.urgency_from ?? null,
+    urgency_to: fields.urgency_to ?? null,
+    floor_reason: fields.floor_reason ?? null,
+    hop_flag_ms: fields.hop_flag_ms ?? null,
+    hop_job_get_ms: fields.hop_job_get_ms ?? null,
+    hop_tech_ms: fields.hop_tech_ms ?? null,
+    hop_job_open_ms: fields.hop_job_open_ms ?? null,
+    hop_tech_status_ms: fields.hop_tech_status_ms ?? null,
+    hop_brief_ms: fields.hop_brief_ms ?? null,
+    hop_mark_booked_ms: fields.hop_mark_booked_ms ?? null,
+    hop_job_write_ms: fields.hop_job_write_ms ?? null,
+    flag_source: fields.flag_source ?? null,
+    boot_age_ms: fields.boot_age_ms ?? null,
+    first_request: fields.first_request ?? null,
   });
+}
+
+// Per-tool-call log context (S1.9): carried on the opaque ctx object via a
+// WeakMap so the ctx shape handlers (and tests) see is unchanged. Ids and
+// numbers only, never argument values.
+export interface ToolLogCtx {
+  request_id?: string;
+  conv_hash?: string;
+  technician_id?: string;
+  hop_flag_ms?: number;
+  hop_job_get_ms?: number;
+  hop_tech_ms?: number;
+  hop_job_open_ms?: number;
+  hop_tech_status_ms?: number;
+  hop_brief_ms?: number;
+  hop_mark_booked_ms?: number;
+  hop_job_write_ms?: number;
+  flag_source?: "kv" | "cache" | "default" | "timeout";
+  eligible_count?: number;
+}
+const toolLogCtx = new WeakMap<object, ToolLogCtx>();
+
+export function setToolLogCtx(ctx: object, fields: ToolLogCtx): void {
+  toolLogCtx.set(ctx, { ...toolLogCtx.get(ctx), ...fields });
+}
+
+export function toolLogCtxOf(ctx: object | undefined): ToolLogCtx {
+  if (ctx === undefined || ctx === null || typeof ctx !== "object") return {};
+  return toolLogCtx.get(ctx) ?? {};
 }
 
 export function log(fields: LogFields): void {
@@ -72,6 +131,18 @@ export function log(fields: LogFields): void {
 
 export function newRequestId(): string {
   return crypto.randomUUID();
+}
+
+// S1.9b: instance boot diagnostics. BOOT_AT is set when this module is first
+// evaluated (function instance boot); first_request is true exactly once, for
+// the first request this instance serves (the check-and-set is synchronous).
+const BOOT_AT = Date.now();
+let firstRequestServed = false;
+
+export function bootFields(): { boot_age_ms: number; first_request: boolean } {
+  const first_request = !firstRequestServed;
+  firstRequestServed = true;
+  return { boot_age_ms: Math.max(0, Date.now() - BOOT_AT), first_request };
 }
 
 // SHA-256 of salt + e164, lowercase hex, first 12 characters.

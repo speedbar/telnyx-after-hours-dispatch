@@ -9,7 +9,9 @@ import { TechnicianActor } from "../src/actors/TechnicianActor.js";
 import { JobActor } from "../src/actors/JobActor.js";
 import { keys } from "../src/lib/kv-keys.js";
 import { isJobId, resolveCallRef } from "../src/lib/validate.js";
-import { TOOLS, type ToolEnv, type ToolResult } from "../src/tools/index.js";
+import { TOOLS, type TechStub, type ToolEnv, type ToolResult } from "../src/tools/index.js";
+import { handleMcp, type McpEnv } from "../src/routes/mcp.js";
+import { callerHash, toolLogCtxOf } from "../src/lib/log.js";
 
 type DCtor = ConstructorParameters<typeof DirectoryActor>;
 type TCtor = ConstructorParameters<typeof TechnicianActor>;
@@ -536,6 +538,230 @@ test("invalid_input for every tool", async () => {
       env,
     ),
     fail("invalid_input", ["reason"]),
+  );
+});
+
+// S1.9 (BUG-005): the hop timings measured inside the tools land on the
+// route's mcp_call line as numbers; never any argument values.
+test("S1.9: hop timing fields appear on mcp_call; no argument values logged", async () => {
+  const TOKEN = "s19-instrument-token-0123456789";
+  const env = await seeded();
+  env.MCP_TOKEN = TOKEN;
+  const callTool = async (name: string, args: Record<string, unknown>) => {
+    const req = new Request("https://test.invalid/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    const res = await handleMcp(req, env as McpEnv);
+    assert.equal(res.status, 200);
+    await res.text();
+  };
+  const before = logLines.length;
+  await callTool("reserve_technician", validReserve("hop-1"));
+  await callTool("create_job", {
+    call_ref: "hop-1",
+    customer_name: "Sam Rivera",
+    address: "12 Banksia Street",
+    details: "Burst pipe under the house",
+  });
+  const lines = logLines
+    .slice(before)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const reserve = lines.find((l) => l.event === "mcp_call" && l.tool === "reserve_technician");
+  const created = lines.find((l) => l.event === "mcp_call" && l.tool === "create_job");
+  assert.ok(reserve && created, "expected mcp_call lines for both tools");
+  for (const k of ["hop_flag_ms", "hop_job_get_ms", "hop_tech_ms", "hop_job_open_ms"]) {
+    assert.equal(typeof reserve[k], "number", `${k} must be a number on the reserve mcp_call`);
+    assert.ok((reserve[k] as number) >= 0);
+  }
+  for (const k of ["hop_job_get_ms", "hop_tech_status_ms", "hop_brief_ms", "hop_mark_booked_ms", "hop_job_write_ms"]) {
+    assert.equal(typeof created[k], "number", `${k} must be a number on the create_job mcp_call`);
+    assert.ok((created[k] as number) >= 0);
+  }
+  // The tool-call total stays in latency_ms.
+  assert.equal(typeof reserve.latency_ms, "number");
+
+  // S1.9b: the job write is the brief RPC (same value, both names) and the
+  // distinct-await hops add up to the total within about 30 ms.
+  assert.equal(created.hop_job_write_ms, created.hop_brief_ms);
+  const cjSum =
+    (created.hop_job_get_ms as number) +
+    (created.hop_tech_status_ms as number) +
+    (created.hop_brief_ms as number) +
+    (created.hop_mark_booked_ms as number);
+  assert.ok(
+    Math.abs(cjSum - (created.latency_ms as number)) <= 30,
+    `create_job hops ${cjSum} vs total ${created.latency_ms}`,
+  );
+
+  // S1.9b: flag_source and eligible_count on the reserve ok line, boot facts
+  // on every mcp_call (first_request true exactly once per instance).
+  assert.equal(reserve.flag_source, "cache");
+  assert.equal(reserve.eligible_count, 2);
+  for (const l of [reserve, created]) {
+    assert.equal(typeof l.boot_age_ms, "number");
+    assert.ok((l.boot_age_ms as number) >= 0);
+  }
+  assert.equal(reserve.first_request, true, "first mcp_call of the instance");
+  assert.equal(created.first_request, false);
+
+  const joined = logLines.slice(before).join("\n");
+  for (const bad of ["Sam Rivera", "Banksia", "61412000001", "0412 000 001", "Burst pipe under the house"]) {
+    assert.ok(!joined.includes(bad), `log leaked argument value: ${bad}`);
+  }
+});
+
+// S1.9b: flag_source distinguishes the actor read ("cache") from the implicit
+// enabled default when the flag key is missing; never a KV read or a timeout.
+test("S1.9b: flag_source is cache when seeded, default when the key is missing", async () => {
+  const withFlag = await seeded();
+  const ctx1 = {};
+  const r1 = (await handler("reserve_technician")(validReserve("fs-1"), withFlag, ctx1)) as ToolResult;
+  assert.equal(r1.ok, true);
+  assert.equal(toolLogCtxOf(ctx1).flag_source, "cache");
+  assert.equal(toolLogCtxOf(ctx1).eligible_count, 2);
+
+  const noFlag = makeToolEnv().env;
+  const ctx2 = {};
+  const r2 = (await handler("reserve_technician")(validReserve("fs-2"), noFlag, ctx2)) as ToolResult;
+  assert.equal(r2.ok, true, "a missing flag is the enabled default");
+  assert.equal(toolLogCtxOf(ctx2).flag_source, "default");
+});
+
+// S1.9 item 5 (a)-(d): technician ids, urgency from/to + category, one
+// request_id per tool call, and conv_hash on every MCP line.
+test("S1.9: technician_id, urgency_raised detail, shared request_id and conv_hash", async () => {
+  const TOKEN = "s19-correlation-token-012345678";
+  const env = await seeded();
+  env.MCP_TOKEN = TOKEN;
+  env.LOG_SALT = "tools-salt";
+  const callTool = async (name: string, args: Record<string, unknown>) => {
+    const req = new Request("https://test.invalid/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name,
+          arguments: args,
+          _meta: { telnyx_conversation_id: "conv-shared-1" },
+        },
+      }),
+    });
+    const res = await handleMcp(req, env as McpEnv);
+    assert.equal(res.status, 200);
+    await res.text();
+  };
+  const before = logLines.length;
+  // Gas trade + urgent: applyFloors raises to emergency (floor_reason "gas").
+  await callTool("reserve_technician", {
+    ...validReserve("s19-gas"),
+    trade: "gas",
+    urgency: "urgent",
+    summary: "The heater pilot light keeps going out",
+  });
+  const lines = logLines
+    .slice(before)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const mcpCall = lines.find((l) => l.event === "mcp_call" && l.tool === "reserve_technician");
+  assert.ok(mcpCall, "expected the reserve mcp_call line");
+  const request_id = mcpCall.request_id;
+  assert.match(String(request_id), /^[0-9a-f-]{36}$/);
+  const conv_hash = await callerHash("conv-shared-1", "tools-salt");
+
+  // (a) technician_id on reserve_attempt and mcp_call (id only).
+  assert.equal(mcpCall.technician_id, "tech-01");
+  assert.equal(mcpCall.conv_hash, conv_hash);
+  const attempts = lines.filter((l) => l.event === "reserve_attempt" && l.component === "mcp");
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].technician_id, "tech-01");
+  assert.equal(attempts[0].attempt, 1);
+  assert.equal(attempts[0].eligible_count, 1);
+
+  // (b) urgency_raised: enum from/to and a fixed category, never the summary.
+  const raised = lines.find((l) => l.event === "urgency_raised");
+  assert.ok(raised, "expected an urgency_raised line");
+  assert.equal(raised.urgency_from, "urgent");
+  assert.equal(raised.urgency_to, "emergency");
+  assert.equal(raised.floor_reason, "gas");
+
+  // (c)(d) one request_id and the conv_hash on every line of this tool call.
+  for (const l of [raised, attempts[0], mcpCall]) {
+    assert.equal(l.request_id, request_id, `${l.event} shares the request_id`);
+    assert.equal(l.conv_hash, conv_hash, `${l.event} carries conv_hash`);
+  }
+
+  // No summary text, no raw conversation id, no customer data anywhere.
+  const joined = logLines.slice(before).join("\n");
+  for (const bad of ["pilot light", "The heater", "conv-shared-1", "Sam Rivera", "Banksia", "61412000001"]) {
+    assert.ok(!joined.includes(bad), `log leaked: ${bad}`);
+  }
+
+  // (a) create_job also names the job's technician on its mcp_call line.
+  const before2 = logLines.length;
+  await callTool("create_job", {
+    call_ref: "s19-gas",
+    customer_name: "Sam Rivera",
+    address: "12 Banksia Street",
+    details: "Pilot light out",
+  });
+  const lines2 = logLines
+    .slice(before2)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const created = lines2.find((l) => l.event === "mcp_call" && l.tool === "create_job");
+  assert.ok(created, "expected the create_job mcp_call line");
+  assert.equal(created.technician_id, "tech-01");
+  // Same conversation id -> same conv_hash across tool calls.
+  assert.equal(created.conv_hash, conv_hash);
+});
+
+// S1.9 follow-up: a failing markBooked is one warn line (category only) and
+// create_job still returns ok — the job is already briefed by then.
+test("create_job: markBooked throwing is a warn line and the result is still ok", async () => {
+  const env = await seeded();
+  const realTech = env.TECH;
+  assert.ok(realTech, "seeded env has TECH");
+  env.TECH = {
+    idFromName: (name: string) => {
+      const actor = realTech.idFromName(name);
+      return {
+        reserve: (args: Parameters<TechStub["reserve"]>[0]) => actor.reserve(args),
+        release: (args: Parameters<TechStub["release"]>[0]) => actor.release(args),
+        status: () => actor.status(),
+        markBooked: () => Promise.reject(new Error("markBooked secret payload")),
+      } as TechStub;
+    },
+  };
+  const reserve = handler("reserve_technician");
+  const create = handler("create_job");
+  await reserve(validReserve("mb-1"), env);
+  const before = logLines.length;
+  const r = await create(
+    { call_ref: "mb-1", customer_name: "Sam Rivera", address: "12 Banksia Street", details: "Burst pipe" },
+    env,
+  );
+  assert.equal(r.ok, true);
+  assert.equal(isJobId(r.job_id), true);
+  const lines = logLines
+    .slice(before)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const warn = lines.find((l) => l.event === "mark_booked_failed");
+  assert.ok(warn, "expected a mark_booked_failed warn line");
+  assert.equal(warn.level, "warn");
+  assert.equal(warn.tool, "create_job");
+  assert.equal(warn.error, "Error", "category only, not the message");
+  assert.equal(warn.job_id, r.job_id);
+  assert.ok(
+    !logLines.slice(before).join("\n").includes("secret payload"),
+    "no error message values in any log line",
   );
 });
 

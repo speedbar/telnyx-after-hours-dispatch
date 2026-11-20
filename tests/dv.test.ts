@@ -7,6 +7,7 @@ import {
   type DvEnv,
   type LookupResult,
 } from "../src/routes/dv.js";
+import { callerHash } from "../src/lib/log.js";
 
 // Fixed "now" for determinism (an integer number of seconds).
 const NOW_MS = 1_800_000_000_000;
@@ -53,7 +54,7 @@ async function sign(
 // One shared fixture per file; created once, reused by every test.
 const fixture = makeKeyPair();
 
-function makeBody(): string {
+function makeBody(extraPayload: Record<string, unknown> = {}): string {
   return JSON.stringify({
     data: {
       event_type: "assistant.initialization",
@@ -61,6 +62,7 @@ function makeBody(): string {
         telnyx_end_user_target: PHONE,
         call_control_id: CALL_REF,
         assistant_id: "asst_test",
+        ...extraPayload,
       },
     },
   });
@@ -176,6 +178,13 @@ test("1. known caller: 200, dynamic_variables only, string values, customer fiel
     assert.equal(dvLookup.tool, "actor.lookup");
     assert.equal(dvLookup.outcome, "ok");
     assert.equal(typeof dvLookup.latency_ms, "number");
+    // S1.9b: dv_in carries the instance boot facts; this is the instance's
+    // first request in this file's process.
+    const dvIn = parsed(cap.lines).find((l) => l.event === "dv_in");
+    assert.ok(dvIn, "expected a dv_in log line");
+    assert.equal(dvIn.first_request, true);
+    assert.equal(typeof dvIn.boot_age_ms, "number");
+    assert.ok((dvIn.boot_age_ms as number) >= 0);
   } finally {
     cap.restore();
   }
@@ -198,6 +207,10 @@ test("2. unknown caller: caller_known false, empty customer fields", async () =>
     assert.equal(vars.caller_known, "false");
     assert.equal(vars.customer_name, "");
     assert.equal(vars.customer_address, "");
+    // S1.9b: second request of the file's process -> first_request false.
+    const dvIn = parsed(cap.lines).find((l) => l.event === "dv_in");
+    assert.equal(dvIn?.first_request, false);
+    assert.equal(typeof dvIn?.boot_age_ms, "number");
   } finally {
     cap.restore();
   }
@@ -528,6 +541,42 @@ test("13. FALLBACK_NUMBER set: fallback_number_spoken is the digits spoken in gr
       !parsed(cap.lines).some((l) => l.event === "fallback_number_unset"),
       "no fallback_number_unset log line when the number is set",
     );
+  } finally {
+    cap.restore();
+  }
+});
+
+// S1.9 item 5d: conv_hash = salted 12-hex of telnyx_conversation_id on every
+// /dv line; another id hashes differently; no id -> null; raw id never logged.
+test("15. conv_hash on every dv line; differs per id; null when absent; raw id never logged", async () => {
+  const { privateKey, publicKeyB64 } = await fixture;
+  const env = makeEnv(publicKeyB64, fakeDirectory({ flag: "true", customer: null }));
+  const ts = String(NOW_S);
+  const cap = captureLog();
+  try {
+    const run = async (bodyExtra: Record<string, unknown>) => {
+      const body = makeBody(bodyExtra);
+      const sig = await sign(privateKey, ts, body);
+      const res = await handleDv(signedRequest(body, sig, ts), env, NOW_MS);
+      assert.equal(res.status, 200);
+      await res.body?.cancel();
+      return parsed(cap.lines.splice(0, cap.lines.length));
+    };
+
+    const expected = await callerHash("conv-dv-1", SALT);
+    const withId = await run({ telnyx_conversation_id: "conv-dv-1" });
+    assert.ok(withId.length > 0);
+    for (const l of withId) assert.equal(l.conv_hash, expected, `${l.event} carries conv_hash`);
+    assert.ok(!withId.map((l) => JSON.stringify(l)).join("\n").includes("conv-dv-1"), "raw id never logged");
+
+    const other = await run({ telnyx_conversation_id: "conv-dv-2" });
+    assert.match(String(other[0]?.conv_hash), /^[0-9a-f]{12}$/);
+    assert.notEqual(other[0]?.conv_hash, expected);
+    assert.equal(other[0]?.conv_hash, await callerHash("conv-dv-2", SALT));
+
+    const noId = await run({});
+    assert.ok(noId.length > 0);
+    for (const l of noId) assert.equal(l.conv_hash, null, `${l.event} has null conv_hash`);
   } finally {
     cap.restore();
   }
