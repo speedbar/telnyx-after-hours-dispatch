@@ -148,10 +148,25 @@ export async function handleCreateJob(
   if (job.state === "reserved") {
     // The reservation became a booked job: mark the hold so the later alarm
     // sweep clears it silently instead of logging a false hold_expired (S1.9e).
-    const stub = tech.idFromName(job.tech_id) as unknown as {
-      markBooked?: (a: { call_ref: string; job_id: string }) => Promise<unknown>;
-    };
-    await stub.markBooked?.({ call_ref, job_id });
+    // A failure here must not fail the call — the job is already briefed.
+    // Error category only, never the message (it may embed values).
+    try {
+      const stub = tech.idFromName(job.tech_id) as unknown as {
+        markBooked?: (a: { call_ref: string; job_id: string }) => Promise<unknown>;
+      };
+      await stub.markBooked?.({ call_ref, job_id });
+    } catch (err) {
+      log({
+        component: "mcp",
+        event: "mark_booked_failed",
+        level: "warn",
+        tool: "create_job",
+        call_ref,
+        job_id,
+        error: err instanceof Error ? err.name : "unknown",
+        ...corr,
+      });
+    }
   }
   return { ok: true, job_id, reference_spoken: spoken(job_id) };
 }

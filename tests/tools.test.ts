@@ -9,7 +9,7 @@ import { TechnicianActor } from "../src/actors/TechnicianActor.js";
 import { JobActor } from "../src/actors/JobActor.js";
 import { keys } from "../src/lib/kv-keys.js";
 import { isJobId, resolveCallRef } from "../src/lib/validate.js";
-import { TOOLS, type ToolEnv, type ToolResult } from "../src/tools/index.js";
+import { TOOLS, type TechStub, type ToolEnv, type ToolResult } from "../src/tools/index.js";
 import { handleMcp, type McpEnv } from "../src/routes/mcp.js";
 import { callerHash } from "../src/lib/log.js";
 
@@ -679,6 +679,48 @@ test("S1.9: technician_id, urgency_raised detail, shared request_id and conv_has
   assert.equal(created.technician_id, "tech-01");
   // Same conversation id -> same conv_hash across tool calls.
   assert.equal(created.conv_hash, conv_hash);
+});
+
+// S1.9 follow-up: a failing markBooked is one warn line (category only) and
+// create_job still returns ok — the job is already briefed by then.
+test("create_job: markBooked throwing is a warn line and the result is still ok", async () => {
+  const env = await seeded();
+  const realTech = env.TECH;
+  assert.ok(realTech, "seeded env has TECH");
+  env.TECH = {
+    idFromName: (name: string) => {
+      const actor = realTech.idFromName(name);
+      return {
+        reserve: (args: Parameters<TechStub["reserve"]>[0]) => actor.reserve(args),
+        release: (args: Parameters<TechStub["release"]>[0]) => actor.release(args),
+        status: () => actor.status(),
+        markBooked: () => Promise.reject(new Error("markBooked secret payload")),
+      } as TechStub;
+    },
+  };
+  const reserve = handler("reserve_technician");
+  const create = handler("create_job");
+  await reserve(validReserve("mb-1"), env);
+  const before = logLines.length;
+  const r = await create(
+    { call_ref: "mb-1", customer_name: "Sam Rivera", address: "12 Banksia Street", details: "Burst pipe" },
+    env,
+  );
+  assert.equal(r.ok, true);
+  assert.equal(isJobId(r.job_id), true);
+  const lines = logLines
+    .slice(before)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const warn = lines.find((l) => l.event === "mark_booked_failed");
+  assert.ok(warn, "expected a mark_booked_failed warn line");
+  assert.equal(warn.level, "warn");
+  assert.equal(warn.tool, "create_job");
+  assert.equal(warn.error, "Error", "category only, not the message");
+  assert.equal(warn.job_id, r.job_id);
+  assert.ok(
+    !logLines.slice(before).join("\n").includes("secret payload"),
+    "no error message values in any log line",
+  );
 });
 
 test("privacy: no customer data in any log line", () => {
