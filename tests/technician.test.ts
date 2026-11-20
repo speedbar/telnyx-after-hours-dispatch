@@ -267,3 +267,53 @@ test("tech_dispatch_expired: logged once when the dispatch lapses", async () => 
     console.log = prev;
   }
 });
+
+// D20-2 follow-up: dispatch is guarded by who holds / occupies the technician.
+test("dispatch: held_by_other refuses and never clears the foreign hold", async () => {
+  const { actor } = makeActor();
+  await actor.reserve({ call_ref: "c1", job_id: "j1" });
+  assert.deepEqual(
+    await actor.dispatch({ call_ref: "c2", job_id: "j2" }),
+    { ok: false, reason: "held_by_other" },
+  );
+  const s = await actor.status();
+  assert.equal(s.held_for?.call_ref, "c1", "the foreign hold survives the refusal");
+  assert.equal(s.held_for?.job_id, "j1");
+  assert.equal(s.dispatched_for, undefined);
+  assert.equal(s.status, "held");
+  // The holder itself can still dispatch.
+  assert.equal((await actor.dispatch({ call_ref: "c1", job_id: "j1" })).ok, true);
+});
+
+test("dispatch: busy refuses while another job is dispatched", async () => {
+  const { actor } = makeActor();
+  await actor.reserve({ call_ref: "c1", job_id: "j1" });
+  assert.equal((await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 60 })).ok, true);
+  assert.deepEqual(
+    await actor.dispatch({ call_ref: "c2", job_id: "j2", busy_s: 60 }),
+    { ok: false, reason: "busy" },
+  );
+  const s = await actor.status();
+  assert.equal(s.dispatched_for?.job_id, "j1", "the first dispatch is untouched");
+});
+
+test("dispatch: idempotent repeat for the same job returns the same until", async () => {
+  const { actor, alarms } = makeActor();
+  await actor.reserve({ call_ref: "c1", job_id: "j1" });
+  const d1 = await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 60 });
+  assert.equal(d1.ok, true);
+  const alarmsAfterFirst = alarms.length;
+  const d2 = await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 60 });
+  assert.deepEqual(d2, d1, "same until, no re-dispatch");
+  assert.equal(alarms.length, alarmsAfterFirst, "repeat does not re-arm");
+  assert.equal((await actor.status()).dispatched_for?.until, d1.ok ? d1.until : -1);
+});
+
+test("dispatch: succeeds with no hold at all (the hold lapsed mid-ring)", async () => {
+  const { actor } = makeActor();
+  await actor.reserve({ call_ref: "c1", job_id: "j1", ttl_s: 1 });
+  await new Promise((r) => setTimeout(r, 1100));
+  const d = await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 60 });
+  assert.equal(d.ok, true);
+  assert.equal((await actor.status()).status, "dispatched");
+});

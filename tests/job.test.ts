@@ -254,3 +254,32 @@ test("ringEvent on an empty actor is a safe no-op", async () => {
     { state: null, effects: [] },
   );
 });
+
+// D20-2 follow-up: an in-flight attempt marks dispatch_state "ringing" when
+// the reducer emits no job_state effect; a job_state effect still wins.
+test("ringEvent marks dispatch_state ringing while dialing and prompting", async () => {
+  const { actor } = makeActor();
+  await actor.open(openArgs);
+  const r1 = await actor.ringEvent({ type: "start", mode: "live", candidates: ["tech-01"], now: 1000 });
+  assert.equal(r1.state?.status, "dialing");
+  assert.equal((await actor.get())?.dispatch_state, "ringing");
+  await actor.ringEvent({ type: "dial_result", ok: true, call_control_id: "cc1", now: 1001 });
+  const r2 = await actor.ringEvent({ type: "answered", call_control_id: "cc1", event_id: "e1", now: 1002 });
+  assert.equal(r2.state?.status, "prompting");
+  assert.equal((await actor.get())?.dispatch_state, "ringing");
+  // The accept emits job_state dispatched: it wins over the ringing default.
+  const r3 = await actor.ringEvent({ type: "gather", call_control_id: "cc1", digits: "1", event_id: "e2", now: 1003 });
+  assert.equal(r3.state?.status, "accepted");
+  assert.equal((await actor.get())?.dispatch_state, "dispatched");
+});
+
+test("ringEvent marks dispatch_state ringing through an escalation (reserving)", async () => {
+  const { actor } = makeActor();
+  await actor.open(openArgs);
+  await actor.ringEvent({ type: "start", mode: "live", candidates: ["t1", "t2"], now: 1000 });
+  await actor.ringEvent({ type: "dial_result", ok: true, call_control_id: "cc1", now: 1001 });
+  await actor.ringEvent({ type: "answered", call_control_id: "cc1", event_id: "e1", now: 1002 });
+  const r = await actor.ringEvent({ type: "gather", call_control_id: "cc1", digits: "2", event_id: "e2", now: 1003 });
+  assert.equal(r.state?.status, "reserving");
+  assert.equal((await actor.get())?.dispatch_state, "ringing");
+});

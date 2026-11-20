@@ -238,8 +238,20 @@ export class JobActor extends StatefulActor {
     if (!rec) return { state: null, effects: [] };
     const [nextRing, effects] = reduceRing(rec.ring ?? initRingState(), event);
     const next: JobRecord = { ...rec, ring: nextRing, updated_at: Date.now() };
+    let hasJobState = false;
     for (const e of effects) {
-      if (e.type === "job_state") next.dispatch_state = e.state;
+      if (e.type === "job_state") {
+        next.dispatch_state = e.state;
+        hasJobState = true;
+      }
+    }
+    // D20-2: while an attempt is in flight the job is ringing; a job_state
+    // effect (dispatched / unassigned) always wins over this default.
+    if (
+      !hasJobState &&
+      (nextRing.status === "dialing" || nextRing.status === "reserving" || nextRing.status === "prompting")
+    ) {
+      next.dispatch_state = "ringing";
     }
     await this.ctx.storage.put("job", next);
     return { state: nextRing, effects };

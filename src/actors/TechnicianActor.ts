@@ -229,11 +229,17 @@ export class TechnicianActor extends StatefulActor {
 
   // D20: explicit accept only (the reducer is the guard). Clears the hold,
   // marks the technician dispatched until now + busy_s, and arms the alarm.
+  // Refuses when another job holds the technician (held_by_other, the foreign
+  // hold is left intact) or another job is dispatched (busy). A repeat for the
+  // same dispatched job returns the original until (idempotent); a matching
+  // hold or no hold at all (lapsed mid-ring) succeeds.
   async dispatch(args: {
     call_ref: string;
     job_id: string;
     busy_s?: number;
-  }): Promise<{ ok: true; until: number } | { ok: false; reason: "invalid_input" }> {
+  }): Promise<
+    { ok: true; until: number } | { ok: false; reason: "invalid_input" | "held_by_other" | "busy" }
+  > {
     const { state } = await this._state();
     const busy = args.busy_s === undefined ? dispatchBusyS(this.env) : args.busy_s;
     const valid =
@@ -245,6 +251,20 @@ export class TechnicianActor extends StatefulActor {
       busy >= 1 &&
       busy <= 86400;
     if (!valid) return { ok: false, reason: "invalid_input" };
+    if (state.dispatched_for) {
+      if (state.dispatched_for.call_ref === args.call_ref && state.dispatched_for.job_id === args.job_id) {
+        return { ok: true, until: state.dispatched_for.until };
+      }
+      log({ component: "actor", event: "dispatch_attempt", outcome: "rejected", technician_id: state.id, call_ref: args.call_ref, job_id: args.job_id, error: "busy" });
+      return { ok: false, reason: "busy" };
+    }
+    if (
+      state.held_for &&
+      (state.held_for.call_ref !== args.call_ref || state.held_for.job_id !== args.job_id)
+    ) {
+      log({ component: "actor", event: "dispatch_attempt", outcome: "rejected", technician_id: state.id, call_ref: args.call_ref, job_id: args.job_id, error: "held_by_other" });
+      return { ok: false, reason: "held_by_other" };
+    }
     const now = Date.now();
     const until = now + busy * 1000;
     const next: TechState = {
