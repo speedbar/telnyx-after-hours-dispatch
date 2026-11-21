@@ -13,8 +13,8 @@ import {
   type RingEvent,
   type RingState,
 } from "../lib/ring.js";
-import { startRing, type RingStartReason, type StartRingEnv } from "../lib/ringstart";
-import { buildRingDeps, type RingDepsFactory } from "../routes/voice";
+import type { RingStartReason } from "../lib/ringstart";
+import { tokenEqual } from "../routes/seed";
 
 type JobState = "reserved" | "briefed" | "released";
 // D20: where the technician ring stands; JobState stays untouched (spec 1.1).
@@ -42,6 +42,10 @@ interface JobRecord {
   ring_at?: number; // ms epoch when the ring start is due (multiplexed alarm)
   ring_alarm_ran_at?: number; // D20-5d: ms epoch the ring-start alarm last ran
   ring_start_reason?: RingStartReason; // D20-5d: why that start (did not) run
+  // D20-5e: single-use token + absolute callback URL for POST /ring-start.
+  // Never logged, never returned anywhere; the token is deleted on use.
+  ring_token?: string;
+  ring_cb?: string;
   created_at: number;
   updated_at: number;
 }
@@ -219,16 +223,41 @@ export class JobActor extends StatefulActor {
     await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
-  // D20: schedule the ring start on the multiplexed alarm (spec 1.2).
-  async setRingAt(ms: number): Promise<{ ok: boolean }> {
+  // D20: schedule the ring start on the multiplexed alarm (spec 1.2). D20-5e:
+  // the single-use callback token and URL are stored beside ring_at for the
+  // alarm's POST to the function (present only from create_job's success path).
+  async setRingAt(
+    ms: number,
+    ring?: { token: string; cb?: string },
+  ): Promise<{ ok: boolean }> {
     if (!Number.isFinite(ms)) return { ok: false };
     const rec = await this.ctx.storage.get<JobRecord>("job");
     if (!rec) return { ok: false };
     rec.ring_at = ms;
+    if (ring !== undefined) {
+      rec.ring_token = ring.token;
+      if (ring.cb !== undefined) rec.ring_cb = ring.cb;
+    }
     rec.updated_at = Date.now();
     await this.ctx.storage.put("job", rec);
     await this._rearm(rec);
     return { ok: true };
+  }
+
+  // D20-5e: atomic single-use check of the ring-start callback token. True
+  // only when the token matches (constant time) AND the ring is idle or
+  // unset; on true the token is deleted, so a replay (or a ring already
+  // started) can never start a second dial. Anything else is false.
+  async consumeRingToken(token: string): Promise<boolean> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec || typeof rec.ring_token !== "string") return false;
+    const status = rec.ring === undefined ? "idle" : rec.ring.status;
+    if (status !== "idle") return false;
+    if (!tokenEqual(token, rec.ring_token)) return false;
+    delete rec.ring_token;
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
+    return true;
   }
 
   // D20: one read-modify-write around the pure reducer — the new ring state
@@ -262,9 +291,12 @@ export class JobActor extends StatefulActor {
   }
 
   // Multiplexed alarm (D20): a due retention deletes the job record; a due
-  // ring_at is consumed FIRST (so a redelivered alarm cannot start a second
-  // ring), then startRing runs from inside the actor and never deletes.
-  // At-least-once delivery: every path is idempotent; a repeat is a no-op.
+  // ring_at is consumed FIRST (so a redelivered alarm cannot POST twice).
+  // D20-5e: the alarm keeps only the timing — the dial runs in the FUNCTION,
+  // which has the ring secrets the actor does not appear to see (V-020), so
+  // the alarm POSTs the stored callback URL with the single-use token and
+  // stamps the response reason. At-least-once delivery: every path is
+  // idempotent; a repeat is a no-op. The alarm never throws.
   async alarm(): Promise<void> {
     let rec = await this.ctx.storage.get<JobRecord>("job");
     if (!rec) return; // already deleted: harmless repeat
@@ -280,34 +312,44 @@ export class JobActor extends StatefulActor {
       rec.updated_at = now;
       await this.ctx.storage.put("job", rec);
       log({ component: "actor", event: "ring_alarm_due", outcome: "ok", call_ref: this._callRef(), job_id: rec.job_id });
-      // D20-5b: run the start from inside the actor (spec 1.2 option A). The
-      // deps keep buildRingDeps but pin jobs to THIS actor's own methods —
-      // calling its own stub would deadlock (no re-entrancy per actor id).
-      // A failure is logged and must never throw out of the alarm.
-      let reason: RingStartReason = "run_error";
-      try {
-        const depsFor: RingDepsFactory = (env, callActor) => ({
-          ...buildRingDeps(env, callActor),
-          jobs: {
-            ringEvent: (e) => this.ringEvent(e),
-            get: () => this.get(),
-          },
-        });
-        reason = (await startRing(this.env as unknown as StartRingEnv, this._callRef(), { depsFor })).reason;
-      } catch (err) {
-        log({
-          component: "actor",
-          event: "ring_alarm_fail",
-          level: "error",
-          outcome: "fail",
-          call_ref: this._callRef(),
-          job_id: rec.job_id,
-          error: err instanceof Error ? err.name : "unknown",
-        });
+      // POST the stored callback (3000 ms timeout). The token goes in the
+      // body only and is never logged. Any failure (no callback stored,
+      // fetch throw, timeout, non-200, a body without ok+reason) is the
+      // single visible reason callback_error.
+      let reason: RingStartReason = "callback_error";
+      if (rec.ring_cb !== undefined && rec.ring_token !== undefined) {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => {
+            ctrl.abort();
+          }, 3000);
+          let res: Response;
+          try {
+            res = await fetch(rec.ring_cb, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                call_ref: this._callRef(),
+                token: rec.ring_token,
+              }),
+              signal: ctrl.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+          if (res.status === 200) {
+            const data = (await res.json()) as { ok?: unknown; reason?: unknown };
+            if (data.ok === true && typeof data.reason === "string") {
+              reason = data.reason as RingStartReason;
+            }
+          }
+        } catch {
+          reason = "callback_error";
+        }
       }
       // D20-5d: stamp why the start (did not) run. Re-read first: a start
       // that ran wrote ring state via ringEvent, so rec is stale here. A
-      // skipped or failed start (not ok, not mode_off) also flips an
+      // failed or missing callback (not ok, not mode_off) also flips an
       // otherwise-unset dispatch_state to unassigned — never silently briefed.
       const fresh = await this.ctx.storage.get<JobRecord>("job");
       if (fresh) {

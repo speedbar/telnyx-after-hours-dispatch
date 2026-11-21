@@ -61,3 +61,6 @@ Date: 21 Nov 2026 (D20-5c). Actor log lines are not visible in telnyx-edge logs;
 
 ### V-019 sim-alarm-1 consumed ring_at but left no ring state
 Date: 21 Nov 2026 (D20-5d). sim-alarm-1 consumed ring_at but left no ring state and the cause is unknown; this slice records ring_start_reason and ring_alarm_ran_at on the job for any recurrence.
+
+### V-020 Ring start moved from the actor alarm to a function callback
+Date: 21 Nov 2026 (D20-5e). The ring start moved from the JobActor alarm to a function callback (POST /ring-start with a single-use token) because the actor did not appear to have the function's secrets (TELNYX_API_KEY, VOICE_CONNECTION_ID, DISPATCH_FROM_NUMBER, TECH_PHONES_JSON) — inferred from a first-call no-ring with 0.4 s ring stamps, not directly proven. The move also puts the next failure in visible function logs (actor logs are not; V-018). Status: INFERRED, pending the live check in the slice spec.

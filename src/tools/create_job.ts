@@ -38,6 +38,13 @@ function ringStartDelayMs(env: ToolEnv): number {
   return Number.isInteger(n) && n >= 0 && n <= 30_000 ? n : 1000;
 }
 
+// D20-5e: the single-use token for the alarm's POST /ring-start callback —
+// 16 random bytes as hex. Never logged and never in any tool result.
+function newRingToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 type FailReason = "invalid_input" | "no_active_reservation" | "hold_expired";
 
 // Every failure is data: same shape, bad_fields names only (never values).
@@ -174,13 +181,24 @@ export async function handleCreateJob(
       }
     }
   }
-  // D20-5b: the job is open — schedule the alarm-driven ring start (spec 1.2
-  // option A). Always scheduled on success; ring_mode is read later inside
-  // startRing. A failure is logged (error name only) and NEVER changes the
-  // create_job result or failure shape.
+  // D20-5e: the job is open — schedule the alarm-driven ring start and store
+  // the single-use callback the alarm will POST (the alarm keeps the timing;
+  // the function, which has the ring secrets, runs the dial). The callback
+  // URL is this function's origin + /ring-start; without an origin (direct
+  // handler call) the token alone is stored and the alarm's POST cannot run,
+  // surfacing as callback_error on the job. A failure here is logged (error
+  // name only) and NEVER changes the create_job result or failure shape.
   const ringStart = Date.now();
   try {
-    await jobsStub.setRingAt(Date.now() + ringStartDelayMs(env));
+    const origin = ctx?.origin;
+    const cb =
+      typeof origin === "string" && origin !== ""
+        ? origin + "/ring-start"
+        : undefined;
+    await jobsStub.setRingAt(Date.now() + ringStartDelayMs(env), {
+      token: newRingToken(),
+      ...(cb === undefined ? {} : { cb }),
+    });
   } catch (err) {
     log({
       component: "mcp",

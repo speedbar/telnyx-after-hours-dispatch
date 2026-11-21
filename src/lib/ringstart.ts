@@ -39,6 +39,8 @@ export interface StartRingOpts {
 
 // D20-5d: why a ring start did (not) run, so a failed or skipped start leaves
 // a visible reason on the job (persisted by JobActor.alarm) instead of silence.
+// D20-5e: "callback_error" is produced by the alarm itself when its callback
+// POST to POST /ring-start fails, times out or is not a 200 ok+reason body.
 export type RingStartReason =
   | "ok"
   | "mode_off"
@@ -46,7 +48,8 @@ export type RingStartReason =
   | "no_job"
   | "no_candidates"
   | "deps_error"
-  | "run_error";
+  | "run_error"
+  | "callback_error";
 
 export interface StartRingResult {
   mode: RingMode;

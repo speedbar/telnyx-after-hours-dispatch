@@ -5,6 +5,7 @@ import { handleSeed } from "./routes/seed";
 import { handleTech } from "./routes/tech";
 import { handleRingTest } from "./routes/ringtest";
 import { handleJobState } from "./routes/jobstate";
+import { handleRingStart } from "./routes/ringstart";
 import { handleVoiceEvents } from "./routes/voice";
 
 // Re-export the actor classes from the entry point so they are bundled and
@@ -59,6 +60,11 @@ export default {
     if (url.pathname === "/admin/job-state") {
       // Same spread pattern as /admin/tech. Token check inside handleJobState.
       return await handleJobState(req, { ...env });
+    }
+    if (url.pathname === "/ring-start") {
+      // Same spread pattern as /admin/tech. The single-use token check runs
+      // inside consumeRingToken; there is no header auth on this route.
+      return await handleRingStart(req, { ...env });
     }
     if (url.pathname === "/voice-events") {
       // Same spread pattern as /dv. Signature check happens inside.

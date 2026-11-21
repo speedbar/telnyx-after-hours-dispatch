@@ -137,7 +137,7 @@ export async function handleMcp(
         })),
       });
     case "tools/call":
-      return handleToolCall(id, params, env, registry, request_id);
+      return handleToolCall(id, params, env, registry, request_id, new URL(request.url).origin);
     default:
       return rpcError(id, -32601, "method_not_found");
   }
@@ -169,6 +169,7 @@ async function handleToolCall(
   env: McpEnv,
   registry: ToolDefinition[],
   request_id: string,
+  origin: string,
 ): Promise<Response> {
   const name = params.name;
   const tool =
@@ -187,7 +188,7 @@ async function handleToolCall(
     !Array.isArray(params._meta)
       ? (params._meta as Record<string, unknown>)
       : undefined;
-  const ctx: ToolCtx = {};
+  const ctx: ToolCtx = { origin };
   if (meta !== undefined) {
     const telnyxId = meta.telnyx_conversation_id;
     const altId = meta.conversation_id;

@@ -61,7 +61,7 @@ export interface JobStub {
     hazards?: string;
   }): Promise<{ ok: true; state: string } | { ok: false; reason: string }>;
   release(args: { job_id: string; reason: string }): Promise<{ released: boolean }>;
-  setRingAt(ms: number): Promise<{ ok: boolean }>;
+  setRingAt(ms: number, ring?: { token: string; cb?: string }): Promise<{ ok: boolean }>;
   get(): Promise<{
     job_id: string;
     tech_id: string;
@@ -78,8 +78,11 @@ export interface ToolEnv {
 
 // Per-call context resolved by the MCP route from tools/call _meta. The
 // conversation id (if Telnyx sends one) outranks any model-sent call_ref.
+// D20-5e: origin is this function's request origin, so create_job can store
+// the absolute POST /ring-start callback URL on the job; never logged.
 export interface ToolCtx {
   meta_conversation_id?: string;
+  origin?: string;
 }
 
 export type ToolHandler = (
