@@ -3,6 +3,7 @@ import { handleDv } from "./routes/dv";
 import { handleMcp } from "./routes/mcp";
 import { handleSeed } from "./routes/seed";
 import { handleTech } from "./routes/tech";
+import { handleVoiceEvents } from "./routes/voice";
 
 // Re-export the actor classes from the entry point so they are bundled and
 // shipped with the function (the runtime resolves each [[actors]] type here;
@@ -48,6 +49,10 @@ export default {
     if (url.pathname === "/admin/tech") {
       // Same spread pattern as /admin/seed. Token check inside handleTech.
       return await handleTech(req, { ...env });
+    }
+    if (url.pathname === "/voice-events") {
+      // Same spread pattern as /dv. Signature check happens inside.
+      return await handleVoiceEvents(req, { ...env });
     }
     return Response.json({ ok: false, error: "not_found" }, { status: 404 });
   },

@@ -44,9 +44,13 @@ const EXPECTED_KEYS = [
   "flag_source",
   "boot_age_ms",
   "first_request",
+  "payload_status",
+  "hangup_cause",
+  "hangup_source",
+  "digits",
 ];
 
-test("formatLine output parses as JSON with exactly the 35 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 39 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -83,6 +87,10 @@ test("formatLine output parses as JSON with exactly the 35 keys in order", () =>
       flag_source: "cache",
       boot_age_ms: 12345,
       first_request: false,
+      payload_status: "answered",
+      hangup_cause: "normal_clearing",
+      hangup_source: "callee",
+      digits: "1",
     },
     new Date("2026-11-18T00:00:00.000Z"),
   );
@@ -104,6 +112,10 @@ test("formatLine output parses as JSON with exactly the 35 keys in order", () =>
   assert.equal(parsed.flag_source, "cache");
   assert.equal(parsed.boot_age_ms, 12345);
   assert.equal(parsed.first_request, false);
+  assert.equal(parsed.payload_status, "answered");
+  assert.equal(parsed.hangup_cause, "normal_clearing");
+  assert.equal(parsed.hangup_source, "callee");
+  assert.equal(parsed.digits, "1");
 });
 
 test("minimal fields: level defaults to info, every other field is null", () => {

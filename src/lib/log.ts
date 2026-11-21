@@ -57,6 +57,12 @@ export interface LogFields {
   flag_source?: "kv" | "cache" | "default" | "timeout"; // S1.9b: where the flag came from
   boot_age_ms?: number; // S1.9b: ms since this instance's module boot
   first_request?: boolean; // S1.9b: true exactly once per instance
+  // D20 /voice-events payload-shape diagnostics (voice_event lines): short
+  // enum-like payload values only — never a number, client_state or body.
+  payload_status?: string;
+  hangup_cause?: string;
+  hangup_source?: string;
+  digits?: string; // gathered digits, at most 3 chars
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -104,6 +110,10 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     flag_source: fields.flag_source ?? null,
     boot_age_ms: fields.boot_age_ms ?? null,
     first_request: fields.first_request ?? null,
+    payload_status: fields.payload_status ?? null,
+    hangup_cause: fields.hangup_cause ?? null,
+    hangup_source: fields.hangup_source ?? null,
+    digits: fields.digits ?? null,
   });
 }
 
