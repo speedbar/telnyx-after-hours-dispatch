@@ -8,35 +8,7 @@ A caller rings the number. A Telnyx AI Assistant runs a Conversation Workflow th
 
 ## System view
 
-```mermaid
-flowchart LR
-  C["Caller"] --> A["Telnyx AI Assistant<br/>Conversation Workflow"]
-  A -->|"1. call start"| DV["POST /dv<br/>dynamic variables"]
-  A -->|"2. tool calls"| MCP["POST /mcp<br/>MCP server, 3 tools in use"]
-  A -.->|"caller asks for a person"| TR["Transfer tool<br/>human accepts by voice"]
-
-  subgraph EDGE["Telnyx Edge function: dispatch (TypeScript)"]
-    DV
-    MCP
-    EV["POST /voice-events<br/>Ed25519 verified"]
-    DA["DirectoryActor<br/>customers, flags"]
-    TA["TechnicianActor<br/>atomic hold with expiry"]
-    JA["JobActor<br/>one per call"]
-    RING["Ring + SMS logic<br/>pure reducer + runner"]
-    OBS["GET /health<br/>GET /admin/job-state"]
-  end
-
-  DV --> DA
-  MCP --> TA
-  MCP --> JA
-  JA --> RING
-  RING -->|"dial, speak, DTMF"| VAPI["Telnyx Call Control"]
-  RING -->|"details, alerts"| SMS["Telnyx Messaging"]
-  VAPI -->|"events"| EV --> RING
-  VAPI --> TECH["On-call technician's phone"]
-  SMS --> TECH
-  SMS --> MGR["Manager's phone"]
-```
+![System architecture](architecture-overview.svg)
 
 ## One call, step by step
 

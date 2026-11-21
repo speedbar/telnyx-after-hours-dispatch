@@ -10,27 +10,7 @@ A voice assistant for a trade business (plumbing, electrical, gas). After hours 
 
 ## How it works
 
-```mermaid
-flowchart LR
-  C[Caller] --> A["Telnyx AI Assistant<br/>Conversation Workflow"]
-  A -->|call start| DV["/dv<br/>dynamic variables"]
-  A -->|tool calls| MCP["/mcp<br/>MCP server"]
-  A -->|ask for a human| T["Transfer tool<br/>(human accepts by voice)"]
-  MCP --> TA["TechnicianActor<br/>atomic hold"]
-  MCP --> JA["JobActor<br/>one per call"]
-  JA -->|ring| R["Call Control<br/>DTMF 1 accept / 2 decline"]
-  R --> SMS["SMS: details to tech,<br/>alert to manager if nobody accepts"]
-  DV --> DA["DirectoryActor<br/>customers + flags"]
-  subgraph Edge["Telnyx Edge function: dispatch"]
-    DV
-    MCP
-    TA
-    JA
-    DA
-    R
-    SMS
-  end
-```
+![Architecture overview](docs/architecture-overview.svg)
 
 - **Workflow first.** The call path is fixed: Triage, Details, Reserve, Job, Close, Hang Up, with a Fallback. The model only talks and extracts details inside a node.
 - **Code decides.** Reserving a technician, the ring, retries (2 attempts), the manager alert and the safety caps are deterministic code behind MCP tools, so a model mistake cannot double-book or skip escalation.
