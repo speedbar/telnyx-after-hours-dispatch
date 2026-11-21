@@ -14,7 +14,7 @@ import {
   type RingState,
 } from "../lib/ring.js";
 import type { RingStartReason } from "../lib/ringstart";
-import type { SmsStatus } from "../lib/sms.js";
+import type { ManagerSmsStatus, SmsStatus } from "../lib/sms.js";
 import { tokenEqual } from "../routes/seed";
 
 type JobState = "reserved" | "briefed" | "released";
@@ -48,6 +48,10 @@ interface JobRecord {
   // recipient number, name or the message body.
   sms_status?: SmsStatus;
   sms_at?: number;
+  // D20c: manager-alert SMS outcome. Status word and timestamp only — never
+  // the manager number or the message body.
+  manager_sms_status?: ManagerSmsStatus;
+  manager_sms_at?: number;
   retention_at?: number; // ms epoch; absent on pre-D20 records means due now
   ring_at?: number; // ms epoch when the ring start is due (multiplexed alarm)
   ring_alarm_ran_at?: number; // D20-5d: ms epoch the ring-start alarm last ran
@@ -309,6 +313,19 @@ export class JobActor extends StatefulActor {
     if (!rec) return { ok: false };
     rec.sms_status = args.status;
     rec.sms_at = args.at;
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
+    return { ok: true };
+  }
+
+  // D20c: stamp the manager-alert outcome (same pattern as smsDone). The
+  // runner checks manager_sms_status before sending, so a duplicate webhook
+  // or a retry never texts twice; no log line here.
+  async managerSmsDone(args: { status: ManagerSmsStatus; at: number }): Promise<{ ok: boolean }> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return { ok: false };
+    rec.manager_sms_status = args.status;
+    rec.manager_sms_at = args.at;
     rec.updated_at = Date.now();
     await this.ctx.storage.put("job", rec);
     return { ok: true };

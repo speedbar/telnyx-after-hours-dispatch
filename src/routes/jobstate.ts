@@ -37,6 +37,8 @@ interface JobStateRecord {
   ring_cb_ms?: number;
   sms_status?: string; // D20b-1 accept-SMS outcome word
   sms_at?: number;
+  manager_sms_status?: string; // D20c manager-alert outcome word
+  manager_sms_at?: number;
 }
 
 export interface JobStateEnv {
@@ -140,6 +142,8 @@ export async function handleJobState(
         ring_cb_ms: rec.ring_cb_ms,
         sms_status: rec.sms_status,
         sms_at: rec.sms_at,
+        manager_sms_status: rec.manager_sms_status,
+        manager_sms_at: rec.manager_sms_at,
       },
       { status: 200 },
     );

@@ -141,6 +141,9 @@ export type RingEffect =
   | { type: "hangup_call" }
   | { type: "mark_dispatched"; technician_id: string }
   | { type: "sms_details"; technician_id: string; attempt: number }
+  // D20c: one manager alert when the ring exhausts with nobody accepting
+  // (never on an accepted leg; the no_candidates START path is ringstart's).
+  | { type: "sms_manager" }
   | { type: "job_state"; state: "dispatched" | "unassigned" }
   | {
       type: "log";
@@ -234,6 +237,7 @@ function escalate(state: RingState, now: number): [RingState, RingEffect[]] {
       s,
       [
         { type: "job_state", state: "unassigned" },
+        { type: "sms_manager" },
         { type: "log", event: "ring_exhausted", attempt: state.attempt, reason },
       ],
     ];

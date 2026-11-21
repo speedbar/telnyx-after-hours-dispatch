@@ -113,3 +113,6 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 
 ## D20b-3 Spoken urgency is the stored value, never mapped (21 Nov 2026)
 - Why (repo review): the old mapping spoke `emergency` as "Urgent" and anything else (incl. the stored value `urgent`) as "Routine", so an urgent job was announced as Routine while the SMS showed the stored value. Choice: the brief speaks the stored urgency as-is, first letter capitalised (empty = omitted, unknown passed through cleaned); .env.example realigned with what the code reads (MCP_TOKEN, ring/job knobs, LOG_LEVEL noted as not implemented).
+
+## D20c Manager alert when nobody accepts (21 Nov 2026)
+- One SMS to optional MANAGER_PHONE on the two "nobody got it" outcomes (ring exhausted; startRing no_candidates): the reducer emits one `sms_manager` effect only on exhaustion and the runner executes it outside the actor (sms_details pattern) while ringstart calls the same runManagerSms directly; reuses the accept-SMS sender/mode/cap/allow-list, is idempotent via the job`s manager_sms_status stamp (exposed with manager_sms_at in /admin/job-state), and a skipped or failed alert never throws or changes dispatch_state.

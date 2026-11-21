@@ -11,6 +11,7 @@ import { log } from "./log";
 import { TECH_POOL, TECH_PROFILES, type Trade } from "./pool";
 import type { RingMode } from "./ring";
 import { runRing, type RingJob } from "./ringrun";
+import { runManagerSms } from "./sms";
 import {
   buildRingDeps,
   type RingDepsFactory,
@@ -187,6 +188,26 @@ export async function startRing(
     await runRing(deps, callActor, { type: "start", mode, candidates, now });
     const reason: RingStartReason =
       job === null ? "no_job" : candidates.length === 0 ? "no_candidates" : "ok";
+    // D20c: nobody could be rung at all — one manager text, idempotent via
+    // the job's manager_sms_status stamp; never on mode_off/capped (they
+    // return above), never thrown, never changes the start result.
+    if (reason === "no_candidates" && deps.sms !== undefined) {
+      try {
+        if (job !== null && job.manager_sms_status === undefined) {
+          const status = await runManagerSms(deps.sms, job, {
+            call_ref: callActor,
+            job_id: job.job_id,
+          });
+          try {
+            await deps.jobs.managerSmsDone?.({ status, at: Date.now() });
+          } catch {
+            // A stamp failure is silent.
+          }
+        }
+      } catch {
+        // A failed manager text never blocks or changes the start result.
+      }
+    }
     return { mode, started: true, reason };
   } catch (err) {
     log({

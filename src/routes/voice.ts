@@ -67,6 +67,8 @@ function buildAcceptSmsDeps(env: VoiceEnv): AcceptSmsDeps {
     },
     prefixes: parseAllowedPrefixes(readConfig(env, "ALLOWED_DIAL_PREFIXES")),
     send: makeSmsSender(env),
+    // D20c: optional manager alert number; unset = the alert is skipped.
+    managerPhone: readConfig(env, "MANAGER_PHONE"),
   };
 }
 

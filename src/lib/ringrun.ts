@@ -10,7 +10,13 @@
 
 import { log } from "./log";
 import { buildBrief } from "./brief";
-import { runAcceptSms, type AcceptSmsDeps, type SmsStatus } from "./sms";
+import {
+  runAcceptSms,
+  runManagerSms,
+  type AcceptSmsDeps,
+  type ManagerSmsStatus,
+  type SmsStatus,
+} from "./sms";
 import { encodeClientState, type TelnyxClient } from "./telnyx-api";
 import type { TechPhones } from "./techphones";
 import type { Dialer, RingEffect, RingEvent, RingState } from "./ring";
@@ -38,6 +44,8 @@ export interface RingJob {
   contact_phone?: string;
   details?: string;
   hazards?: string;
+  // D20c: stamp read back for manager-alert idempotency.
+  manager_sms_status?: string;
   ring?: RingState;
 }
 
@@ -46,6 +54,8 @@ export interface RingJobs {
   get(): Promise<RingJob | null>;
   // D20b-1: optional stamp of the accept-SMS outcome (status word + time only).
   smsDone?(args: { status: SmsStatus; at: number }): Promise<unknown>;
+  // D20c: optional stamp of the manager-alert outcome (status word + time).
+  managerSmsDone?(args: { status: ManagerSmsStatus; at: number }): Promise<unknown>;
 }
 
 // TechnicianActor stub shape (real methods are structurally assignable).
@@ -361,6 +371,51 @@ async function execute(
       } catch {
         effectLog(ctx, eff, false);
         failLog(ctx, eff.type, "exception", id);
+      }
+      return undefined;
+    }
+
+    case "sms_manager": {
+      // D20c: nobody accepted — one text to the manager, executed outside the
+      // actor (same pattern as sms_details). Idempotent via the job's
+      // manager_sms_status stamp; never throws, never changes dispatch state.
+      if (deps.sms === undefined) {
+        effectLog(ctx, eff, true);
+        log({
+          component: "ops",
+          event: "sms_skipped",
+          error: "no_deps",
+          call_ref: ctx.call_ref,
+          job_id: ctx.job_id,
+        });
+        return undefined;
+      }
+      try {
+        const job = await deps.jobs.get(); // PII feeds the SMS body, never a log
+        if (job !== null && ctx.job_id === "") ctx.job_id = job.job_id;
+        if (job?.manager_sms_status !== undefined) {
+          // Already stamped: a duplicate webhook or retry must not text twice.
+          effectLog(ctx, eff, true);
+          log({
+            component: "ops",
+            event: "sms_skipped",
+            error: "already_done",
+            call_ref: ctx.call_ref,
+            job_id: ctx.job_id,
+          });
+          return undefined;
+        }
+        const status = await runManagerSms(deps.sms, job, ctx);
+        effectLog(ctx, eff, status !== "failed");
+        if (status === "failed") failLog(ctx, eff.type, "sms_failed");
+        try {
+          await deps.jobs.managerSmsDone?.({ status, at: Date.now() });
+        } catch {
+          // A stamp failure is silent: the call outcome never depends on it.
+        }
+      } catch {
+        effectLog(ctx, eff, false);
+        failLog(ctx, eff.type, "exception");
       }
       return undefined;
     }

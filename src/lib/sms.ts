@@ -19,6 +19,9 @@ const SMS_TIMEOUT_MS = 3000;
 
 export type SmsMode = "off" | "dry_run" | "live";
 export type SmsStatus = "sent" | "dry_run" | "off" | "capped" | "failed";
+// D20c: the manager alert adds "skipped" for a missing/undialable manager
+// number or a missing job — a config gap, not a send failure.
+export type ManagerSmsStatus = SmsStatus | "skipped";
 
 // The job fields the accept SMS may carry (from the JobActor briefing).
 export interface AcceptSmsJob {
@@ -39,6 +42,9 @@ export interface AcceptSmsDeps {
   bumpCap(): Promise<boolean>; // false = daily cap reached (or counter failed)
   prefixes: string[];
   send(toE164: string, text: string): Promise<{ ok: boolean; reason?: string }>;
+  // D20c: MANAGER_PHONE (digits or E.164), resolved once at deps build;
+  // unset or empty = the manager alert is skipped, never an error.
+  managerPhone?: string;
 }
 
 // Plain GSM-7 safe subset: printable ASCII only; anything else becomes a
@@ -75,6 +81,43 @@ export function buildAcceptSms(job: AcceptSmsJob): string {
     [gsm(job.urgency), gsm(job.trade)].filter((s) => s !== "").join(" "),
   );
   const lines: string[] = [`${BUSINESS_NAME} - Job ${gsm(job.job_id)}`, urgencyTrade];
+  const hazards = gsm(job.hazards ?? "");
+  if (hazards !== "" && hazards.toLowerCase() !== "none") lines.push("HAZARD: " + hazards);
+  const name = gsm(job.customer_name ?? "");
+  if (name !== "") lines.push("Customer: " + name);
+  const phone = gsm(job.contact_phone ?? "");
+  if (phone !== "") lines.push("Phone: " + localDigits(phone));
+  const address = gsm(job.address ?? "");
+  if (address !== "") {
+    const suburb = gsm(job.suburb);
+    const dup = suburb !== "" && address.toLowerCase().includes(suburb.toLowerCase());
+    lines.push("Address: " + (suburb === "" || dup ? address : `${address}, ${suburb}`));
+  }
+  const head = lines.join("\n");
+  const details = gsm(job.details ?? "");
+  if (details !== "") {
+    const room = SMS_MAX_LEN - head.length - TAIL.length - 2; // 2 joining "\n"
+    if (room > 0) {
+      const piece = `Details: ${details}`.slice(0, room).trimEnd();
+      if (piece !== "") return head + "\n" + piece + "\n" + TAIL;
+    }
+  }
+  return head + "\n" + TAIL;
+}
+
+// D20c manager alert, same layout rules as buildAcceptSms with an UNASSIGNED
+// header and a "Nobody accepted." lead: HAZARD first of the detail lines and
+// never truncated, Details the only field cut, one item per line, GSM-safe,
+// at or under SMS_MAX_LEN, ended by "Do not reply."
+export function buildManagerSms(job: AcceptSmsJob): string {
+  const TAIL = "Do not reply.";
+  const urgencyTrade = capFirst(
+    [gsm(job.urgency), gsm(job.trade)].filter((s) => s !== "").join(" "),
+  );
+  const lines: string[] = [
+    `${BUSINESS_NAME} - Job ${gsm(job.job_id)} UNASSIGNED`,
+    urgencyTrade === "" ? "Nobody accepted." : "Nobody accepted. " + urgencyTrade,
+  ];
   const hazards = gsm(job.hazards ?? "");
   if (hazards !== "" && hazards.toLowerCase() !== "none") lines.push("HAZARD: " + hazards);
   const name = gsm(job.customer_name ?? "");
@@ -216,6 +259,74 @@ export async function runAcceptSms(
   }
   try {
     const r = await deps.send(toE164(digits), body);
+    if (r.ok === true) {
+      log({ ...base, event: "sms_sent", outcome: "ok" });
+      return "sent";
+    }
+    log({ ...base, event: "sms_failed", level: "warn", outcome: "fail", error: r.reason ?? "send_failed" });
+    return "failed";
+  } catch {
+    log({ ...base, event: "sms_failed", level: "warn", outcome: "fail", error: "exception" });
+    return "failed";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// D20c manager alert: one text when nobody accepted. Same mode flag, cap,
+// allow-list and sender as the accept SMS; never throws; the recipient, the
+// body and any PII never reach a log line; a failure changes nothing.
+export async function runManagerSms(
+  deps: AcceptSmsDeps,
+  job: AcceptSmsJob | null,
+  ctx: { call_ref: string; job_id: string },
+): Promise<ManagerSmsStatus> {
+  const base = {
+    component: "ops" as const,
+    call_ref: ctx.call_ref,
+    job_id: ctx.job_id,
+  };
+  const raw = deps.managerPhone;
+  if (raw === undefined || raw.trim() === "") {
+    log({ ...base, event: "sms_skipped", error: "no_manager" });
+    return "skipped";
+  }
+  const to = toE164(raw);
+  const allow = checkDialAllowed(to, deps.prefixes);
+  if (!allow.allowed) {
+    log({ ...base, event: "sms_skipped", level: "warn", error: allow.reason ?? "prefix" });
+    return "skipped";
+  }
+  let mode: SmsMode = "dry_run"; // fail safe, same pattern as the accept SMS
+  try {
+    mode = await deps.readMode();
+  } catch {
+    mode = "dry_run";
+  }
+  if (mode === "off") {
+    log({ ...base, event: "sms_skipped", error: "off" });
+    return "off";
+  }
+  if (job === null) {
+    log({ ...base, event: "sms_skipped", level: "warn", error: "no_job" });
+    return "skipped";
+  }
+  const body = buildManagerSms(job);
+  if (mode === "dry_run") {
+    log({ ...base, event: "sms_dry_run", sms_len: body.length });
+    return "dry_run";
+  }
+  let within = false;
+  try {
+    within = await deps.bumpCap();
+  } catch {
+    within = false; // counter failure fails safe: the SMS is skipped
+  }
+  if (!within) {
+    log({ ...base, event: "sms_capped", level: "warn" });
+    return "capped";
+  }
+  try {
+    const r = await deps.send(to, body);
     if (r.ok === true) {
       log({ ...base, event: "sms_sent", outcome: "ok" });
       return "sent";
