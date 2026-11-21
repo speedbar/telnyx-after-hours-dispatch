@@ -4,6 +4,7 @@ import { handleMcp } from "./routes/mcp";
 import { handleSeed } from "./routes/seed";
 import { handleTech } from "./routes/tech";
 import { handleRingTest } from "./routes/ringtest";
+import { handleJobState } from "./routes/jobstate";
 import { handleVoiceEvents } from "./routes/voice";
 
 // Re-export the actor classes from the entry point so they are bundled and
@@ -54,6 +55,10 @@ export default {
     if (url.pathname === "/admin/ring-test") {
       // Same spread pattern as /admin/tech. Token check inside handleRingTest.
       return await handleRingTest(req, { ...env });
+    }
+    if (url.pathname === "/admin/job-state") {
+      // Same spread pattern as /admin/tech. Token check inside handleJobState.
+      return await handleJobState(req, { ...env });
     }
     if (url.pathname === "/voice-events") {
       // Same spread pattern as /dv. Signature check happens inside.

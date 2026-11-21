@@ -55,3 +55,6 @@ Date: 18 Nov 2026 (opened); closed 19 Nov 2026. Test: MCP `_meta` key names Teln
 
 ### V-017 Do actors see the same bindings (TECH / DIRECTORY / JOBS) as the function env?
 Date: 21 Nov 2026 (D20-5b Step 0). Checked before wiring startRing into JobActor.alarm. Finding: YES, reachable. Installed @telnyx/edge-runtime README states "Inside a StatefulActor, this.env carries one namespace per [[actors]] binding declared in your telnyx.toml"; env.d.ts defines Env as the one bindings environment for both "this.env inside a StatefulActor" and "the env argument of a function handler", and the StatefulActor constructor wires it; telnyx.toml declares TECH, DIRECTORY and JOBS. JobActor already reads this.env for config; mcp.ts handlers get stubs from env.TECH / env.JOBS the same way. Hazard recorded from the same README: no re-entrancy per actor id — an actor method calling its own id deadlocks and rejects with ActorMethodTimeoutError, so the alarm pins deps.jobs to the actor's own methods, never its own stub. Status: READ FROM TYPES/DOCS (constructor wiring verified by tsc); not yet observed live (first live ring will confirm).
+
+### V-018 Actor log lines in telnyx-edge logs; POST /admin/job-state is the check
+Date: 21 Nov 2026 (D20-5c). Actor log lines are not visible in telnyx-edge logs; the /admin/job-state route is the state-based check.
