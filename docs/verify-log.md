@@ -52,3 +52,24 @@ Date: 18 Nov 2026, 1:46 pm Sydney. Shipped S1.4c. With the bearer token: tools/l
 
 ### V-016 Which _meta key names does Telnyx send on tools/call?
 Date: 18 Nov 2026 (opened); closed 19 Nov 2026. Test: MCP `_meta` key names Telnyx sends on tools/call. Result: Telnyx sends _meta.telnyx_conversation_id on tools/call (observed live 19 Nov 2026, two calls: call_ref_source=meta and meta_keys=telnyx_conversation_id on every mcp_call). The model sent no call_ref in either call and the tools still worked. The Telnyx docs also say a telnyx_conversation_id is included with each MCP request. Status: OBSERVED.
+
+### V-017 Do actors see the same bindings (TECH / DIRECTORY / JOBS) as the function env?
+Date: 21 Nov 2026 (D20-5b Step 0). Checked before wiring startRing into JobActor.alarm. Finding: YES, reachable. Installed @telnyx/edge-runtime README states "Inside a StatefulActor, this.env carries one namespace per [[actors]] binding declared in your telnyx.toml"; env.d.ts defines Env as the one bindings environment for both "this.env inside a StatefulActor" and "the env argument of a function handler", and the StatefulActor constructor wires it; telnyx.toml declares TECH, DIRECTORY and JOBS. JobActor already reads this.env for config; mcp.ts handlers get stubs from env.TECH / env.JOBS the same way. Hazard recorded from the same README: no re-entrancy per actor id — an actor method calling its own id deadlocks and rejects with ActorMethodTimeoutError, so the alarm pins deps.jobs to the actor's own methods, never its own stub. Status: READ FROM TYPES/DOCS (constructor wiring verified by tsc); not yet observed live (first live ring will confirm).
+
+### V-018 Actor log lines in telnyx-edge logs; POST /admin/job-state is the check
+Date: 21 Nov 2026 (D20-5c). Actor log lines are not visible in telnyx-edge logs; the /admin/job-state route is the state-based check.
+
+### V-019 sim-alarm-1 consumed ring_at but left no ring state
+Date: 21 Nov 2026 (D20-5d). sim-alarm-1 consumed ring_at but left no ring state and the cause is unknown; this slice records ring_start_reason and ring_alarm_ran_at on the job for any recurrence.
+
+### V-020 Ring start moved from the actor alarm to a function callback
+Date: 21 Nov 2026 (D20-5e). The ring start moved from the JobActor alarm to a function callback (POST /ring-start with a single-use token) because the actor did not appear to have the function's secrets (TELNYX_API_KEY, VOICE_CONNECTION_ID, DISPATCH_FROM_NUMBER, TECH_PHONES_JSON) — inferred from a first-call no-ring with 0.4 s ring stamps, not directly proven. The move also puts the next failure in visible function logs (actor logs are not; V-018). Status: INFERRED, pending the live check in the slice spec.
+
+### V-021 What ring_cb_error / ring_cb_host showed on the first live run
+Date: 21 Nov 2026 (D20-5f). The alarm now stamps ring_cb_error (timeout | network | http_<status> | bad_body | no_cb), ring_cb_host (hostname only) and ring_cb_ms on the job, and /admin/job-state returns them; the callback timeout is 8000 ms with one retry (after 500 ms) on timeout or network only. First live run on d20-ring-live: result: pending (until Nabeel reports it).
+
+### V-022 The alarm's POST to /ring-start times out on the actor's own host
+Date: 21 Nov 2026 (D20-5g). Live test sim-cb-2 (D20-5f deployed): the JobActor alarm POSTed to /ring-start on our own public host and timed out twice (ring_cb_error: timeout, ring_cb_host correct, ring_cb_ms: 8001, ring_alarm_ran_at about 16 s after the alarm; no /ring-start log line in telnyx-edge logs dispatch within 2 minutes). Cause NOT proven. Two hypotheses: (1) re-entrancy — the alarm holds the JobActor while it waits for /ring-start, and /ring-start calls the same JobActor (consumeRingToken), so both wait; (2) the actor cannot make outbound calls to its own public URL. Not settled before the deadline: the function path itself is proven end to end by /admin/ring-test (startRing -> runRing -> dial -> webhook -> accept -> dispatched). Workaround shipped in D20-5g: create_job starts the ring inline in the function (RING_INLINE default), inside a hard 3 s cap; the alarm + callback stays only as a fallback on deps_error / run_error / timeout. Result of the sim-cb-3 live check: to be filled in after the test.
+
+### V-023 SMS on accept (D20b-1): /v2/messages fields; live result pending
+Date: 21 Nov 2026 (D20b-1). Accept SMS sends verified against the Telnyx API reference: POST https://api.telnyx.com/v2/messages with to (E.164), text, type "SMS", messaging_profile_id (required with an alphanumeric sender ID) and from = the Alpha sender of profile dispatch-sms (supplied as SMS_FROM). Live result pending (owner runs the dry_run then live check in the task spec).

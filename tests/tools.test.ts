@@ -281,9 +281,82 @@ test("create_job: happy path without job_id, replay, invented job_id ignored", a
   assert.deepEqual(invented, c1);
 });
 
-test("create_job after the hold expired -> hold_expired", async () => {
+// D20-5b: a successful create_job schedules the alarm-driven ring start
+// (ring_at about RING_START_DELAY_MS out); a setRingAt failure is logged and
+// never changes the result. D20-5g: this is the RING_INLINE=0 path.
+test("create_job schedules ring_at; setRingAt failure keeps the result identical", async () => {
   const env = await seeded();
-  (env as Record<string, unknown>).DISPATCH_HOLD_TTL_S = "1";
+  env.RING_INLINE = "0";
+  const reserve = handler("reserve_technician");
+  const create = handler("create_job");
+  const r1 = (await reserve(validReserve("call-080"), env)) as ToolResult;
+  const job_id = r1.job_id as string;
+  const good = {
+    call_ref: "call-080",
+    customer_name: "Sam Rivera",
+    address: "12 Banksia Street",
+    details: "Burst pipe flooding the kitchen",
+  };
+  const want = { ok: true, job_id, reference_spoken: job_id.split("").join(" ") };
+  const c1 = await create(good, env);
+  assert.deepEqual(c1, want);
+  const rec1 = (await jobRecord(env, "call-080")) as unknown as { ring_at?: number };
+  const delay = (rec1?.ring_at ?? NaN) - Date.now();
+  assert.ok(delay <= 1000 && delay > -2000, `ring_at about 1s out, got ${String(delay)}`);
+
+  const r2 = (await reserve(validReserve("call-081"), env)) as ToolResult;
+  const job_id2 = r2.job_id as string;
+  const { ref } = await resolveCallRef({ call_ref: "call-081" }, {});
+  const stub = env.JOBS?.idFromName(ref as string) as unknown as {
+    setRingAt(ms: number): Promise<{ ok: boolean }>;
+  };
+  stub.setRingAt = () => Promise.reject(new RangeError("message-must-not-appear"));
+  const before = logLines.length;
+  const c2 = await create({ ...good, call_ref: "call-081" }, env);
+  assert.deepEqual(c2, {
+    ok: true,
+    job_id: job_id2,
+    reference_spoken: job_id2.split("").join(" "),
+  });
+  const failed = logLines
+    .slice(before)
+    .filter((l) => l.includes('"event":"ring_schedule_fail"'));
+  assert.equal(failed.length, 1, "ring_schedule_fail logged once");
+  assert.ok(failed[0].includes('"error":"RangeError"'), "error name only");
+  assert.ok(!failed[0].includes("message-must-not-appear"), "message never logged");
+});
+
+// D20-5e: the fresh-success path also stores the single-use ring callback —
+// a random 32-hex token and origin + "/ring-start" — on the job. Both must
+// stay off the tool result and every log line. D20-5g: this is the
+// RING_INLINE=0 path (an inline start consumes the token instead).
+test("create_job stores the ring token and callback; they never reach the model or the logs", async () => {
+  const env = await seeded();
+  env.RING_INLINE = "0";
+  const reserve = handler("reserve_technician");
+  const create = handler("create_job");
+  const r1 = (await reserve(validReserve("call-090"), env)) as ToolResult;
+  const job_id = r1.job_id as string;
+  const before = logLines.length;
+  const c = await create(
+    { call_ref: "call-090", customer_name: "Sam Rivera", address: "12 Banksia Street", details: "Burst pipe" },
+    env,
+    { origin: "https://fn.example" },
+  );
+  assert.deepEqual(c, { ok: true, job_id, reference_spoken: job_id.split("").join(" ") });
+  const rec = (await jobRecord(env, "call-090")) as unknown as {
+    ring_token?: string;
+    ring_cb?: string;
+  };
+  assert.match(rec?.ring_token ?? "", /^[0-9a-f]{32}$/, "16 random bytes as hex");
+  assert.equal(rec?.ring_cb, "https://fn.example/ring-start");
+  const blob = JSON.stringify(c) + "\n" + logLines.slice(before).join("\n");
+  assert.ok(rec?.ring_token !== undefined && !blob.includes(rec.ring_token), "token in no result or log line");
+  assert.ok(!logLines.slice(before).join("\n").includes("fn.example"), "callback URL never logged");
+});
+
+test("create_job after the hold expired -> hold_expired", async () => {
+  const env = await seeded();  (env as Record<string, unknown>).DISPATCH_HOLD_TTL_S = "1";
   await handler("reserve_technician")(validReserve("call-020"), env);
   await new Promise((r) => setTimeout(r, 1100));
   const r = await handler("create_job")(

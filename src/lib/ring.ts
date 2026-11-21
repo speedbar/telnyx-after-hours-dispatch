@@ -20,7 +20,14 @@ export interface DialResult {
   reason?: string;
 }
 
-export type Dialer = (toDigits: string) => Promise<DialResult>;
+// Optional metadata for the Telnyx Dial command (spec section 6): the gated
+// wrapper passes these straight through to the injected dialer.
+export interface DialerOpts {
+  client_state?: string;
+  command_id?: string;
+}
+
+export type Dialer = (toDigits: string, opts?: DialerOpts) => Promise<DialResult>;
 
 // Denied right after the country code: 1900 premium, 13/18 service, and the
 // AU emergency or relay numbers 000 / 112 / 106. Applies even inside "+61".
@@ -56,11 +63,11 @@ export function withDialGate(
   const prefixes = Array.isArray(rawPrefixes)
     ? rawPrefixes
     : parseAllowedPrefixes(rawPrefixes);
-  return async (toDigits: string): Promise<DialResult> => {
+  return async (toDigits: string, opts?: DialerOpts): Promise<DialResult> => {
     const check = checkDialAllowed(toE164(toDigits), prefixes);
     if (!check.allowed) return { ok: false, reason: check.reason };
     try {
-      return await dialer(toDigits);
+      return await dialer(toDigits, opts);
     } catch {
       return { ok: false, reason: "dialer_error" };
     }
@@ -108,6 +115,9 @@ export interface RingState {
   attempt: number; // 0 before start
   tried: string[];
   current?: RingCurrent;
+  // A declined leg awaiting its confirmation speech: the voice route hangs
+  // THIS ccid up on call.speak.ended (accept uses status === "accepted").
+  confirm_ccid?: string;
   seen_event_ids: string[]; // capped at SEEN_EVENTS_CAP
   outcome_log: RingOutcomeEntry[];
   candidates: string[];
@@ -126,10 +136,14 @@ export type RingEffect =
   | { type: "reserve"; technician_id: string }
   | { type: "dial"; technician_id: string; attempt: number }
   | { type: "gather_prompt" }
-  | { type: "confirm_hangup" }
+  | { type: "confirm_hangup"; decline?: boolean }
   | { type: "release"; technician_id: string }
   | { type: "hangup_call" }
   | { type: "mark_dispatched"; technician_id: string }
+  | { type: "sms_details"; technician_id: string; attempt: number }
+  // D20c: one manager alert when the ring exhausts with nobody accepting
+  // (never on an accepted leg; the no_candidates START path is ringstart's).
+  | { type: "sms_manager" }
   | { type: "job_state"; state: "dispatched" | "unassigned" }
   | {
       type: "log";
@@ -185,8 +199,9 @@ function guardWebhookEvent(
   return { state: s1, ok: true, effects: [] };
 }
 
-// One failed attempt: record outcome, release the technician, hang up the
-// answered leg (declined / no_input only), then escalate or exhaust.
+// One failed attempt: record outcome, release the technician, end the
+// answered leg (declined hears the thanks line, hung up on speak.ended via
+// confirm_ccid; no_input hangs up at once), then escalate or exhaust.
 function failAttempt(
   state: RingState,
   outcome: RingOutcome,
@@ -201,7 +216,10 @@ function failAttempt(
     { type: "log", event: "ring_outcome", technician_id: tech, attempt: state.attempt, outcome },
     { type: "release", technician_id: tech },
   ];
-  if (outcome === "declined" || outcome === "no_input") {
+  if (outcome === "declined") {
+    s1.confirm_ccid = state.current!.call_control_id;
+    effects.push({ type: "confirm_hangup", decline: true });
+  } else if (outcome === "no_input") {
     effects.push({ type: "hangup_call" });
   }
   const [s2, esc] = escalate(s1, now);
@@ -219,6 +237,7 @@ function escalate(state: RingState, now: number): [RingState, RingEffect[]] {
       s,
       [
         { type: "job_state", state: "unassigned" },
+        { type: "sms_manager" },
         { type: "log", event: "ring_exhausted", attempt: state.attempt, reason },
       ],
     ];
@@ -384,6 +403,9 @@ export function reduceRing(
             { type: "mark_dispatched", technician_id: tech },
             { type: "job_state", state: "dispatched" },
             { type: "confirm_hangup" },
+            // D20b-1: the accepting technician is texted the full details,
+            // after the confirmation speech is issued; never before it.
+            { type: "sms_details", technician_id: tech, attempt: s.attempt },
           ],
         ];
       }

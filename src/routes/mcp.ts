@@ -137,7 +137,7 @@ export async function handleMcp(
         })),
       });
     case "tools/call":
-      return handleToolCall(id, params, env, registry, request_id);
+      return handleToolCall(id, params, env, registry, request_id, new URL(request.url).origin);
     default:
       return rpcError(id, -32601, "method_not_found");
   }
@@ -158,6 +158,7 @@ const HOP_KEYS = [
   "hop_brief_ms",
   "hop_mark_booked_ms",
   "hop_job_write_ms",
+  "hop_ring_ms",
 ] as const;
 
 // tools/call: dispatch to the registry handler and log one mcp_call line
@@ -168,6 +169,7 @@ async function handleToolCall(
   env: McpEnv,
   registry: ToolDefinition[],
   request_id: string,
+  origin: string,
 ): Promise<Response> {
   const name = params.name;
   const tool =
@@ -186,7 +188,9 @@ async function handleToolCall(
     !Array.isArray(params._meta)
       ? (params._meta as Record<string, unknown>)
       : undefined;
-  const ctx: ToolCtx = {};
+  // D20-5g: env goes on the ctx (like origin) so create_job's inline ring
+  // start runs with the route's secrets, not a rebuilt object.
+  const ctx: ToolCtx = { origin, env };
   if (meta !== undefined) {
     const telnyxId = meta.telnyx_conversation_id;
     const altId = meta.conversation_id;

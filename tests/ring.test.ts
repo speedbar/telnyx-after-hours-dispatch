@@ -109,7 +109,7 @@ test("happy path: answered -> press 1 -> accepted with dispatch effects", () => 
   });
   assert.equal(s2.status, "accepted");
   assert.deepEqual(s2.outcome_log, [{ technician_id: "t1", outcome: "accepted", at: 1003 }]);
-  assert.deepEqual(types(eff2), ["log", "log", "log", "mark_dispatched", "job_state", "confirm_hangup"]);
+  assert.deepEqual(types(eff2), ["log", "log", "log", "mark_dispatched", "job_state", "confirm_hangup", "sms_details"]);
   assert.ok(logEvents(eff2).includes("ring_gather"));
   assert.ok(logEvents(eff2).includes("ring_accepted"));
 });
@@ -121,8 +121,10 @@ test("escalate: status reserving, only a reserve effect, no attempt increment", 
   assert.equal(s1.attempt, 1, "attempt not incremented before reserve_result");
   assert.deepEqual(s1.tried, ["t1"]);
   assert.equal(s1.current?.technician_id, "t2");
-  assert.deepEqual(types(eff1), ["log", "log", "release", "hangup_call", "log", "reserve"]);
+  assert.deepEqual(types(eff1), ["log", "log", "release", "confirm_hangup", "log", "reserve"]);
   assert.deepEqual(eff1[2], { type: "release", technician_id: "t1" });
+  assert.deepEqual(eff1[3], { type: "confirm_hangup", decline: true });
+  assert.equal(s1.confirm_ccid, "cc1", "declined leg stamped for the speak.ended hangup");
   assert.deepEqual(eff1[5], { type: "reserve", technician_id: "t2" });
   assert.ok(logEvents(eff1).includes("ring_escalate"));
 });
@@ -201,7 +203,7 @@ test("no_input (gather timeout) escalates; exhausts at attempt 2", () => {
   assert.ok(logEvents(eff4).includes("ring_exhausted"));
 });
 
-test("hangup_call is emitted only for declined and no_input", () => {
+test("declined gets a confirm_hangup; hangup_call is emitted only for no_input", () => {
   const cases: Array<[RingOutcome, () => RingState, RingEvent]> = [
     ["declined", () => startPrompting()[0], { type: "gather", call_control_id: "cc1", digits: "2", event_id: "g1", now: 1010 }],
     ["no_input", () => startPrompting()[0], { type: "gather", call_control_id: "cc1", digits: "", event_id: "g2", now: 1010 }],
@@ -212,8 +214,14 @@ test("hangup_call is emitted only for declined and no_input", () => {
   for (const [outcome, setup, ev] of cases) {
     const [s, eff] = reduceRing(setup(), ev);
     assert.equal(s.outcome_log[0].outcome, outcome, outcome);
-    const expectHangup = outcome === "declined" || outcome === "no_input";
+    const expectHangup = outcome === "no_input";
     assert.equal(types(eff).includes("hangup_call"), expectHangup, `hangup_call for ${outcome}`);
+    const expectConfirm = outcome === "declined";
+    assert.equal(
+      eff.some((e) => e.type === "confirm_hangup" && e.decline === true),
+      expectConfirm,
+      `decline confirmation for ${outcome}`,
+    );
   }
 });
 
@@ -316,18 +324,35 @@ test("parseAllowedPrefixes: csv or the +61 default", () => {
 });
 
 test("withDialGate: denied numbers never reach the dialer; errors are data", async () => {
-  const calls: string[] = [];
-  const inner = async (to: string): Promise<DialResult> => {
-    calls.push(to);
+  const calls: { to: string; opts?: { client_state?: string; command_id?: string } }[] = [];
+  const inner = async (
+    to: string,
+    opts?: { client_state?: string; command_id?: string },
+  ): Promise<DialResult> => {
+    calls.push({ to, ...(opts !== undefined ? { opts } : {}) });
     return { ok: true, call_control_id: "cc" };
   };
   const dial = withDialGate(undefined, inner);
   assert.deepEqual(await dial("61412345678"), { ok: true, call_control_id: "cc" });
-  assert.deepEqual(calls, ["61412345678"]);
+  assert.deepEqual(calls, [{ to: "61412345678" }]);
   assert.deepEqual(await dial("611900123456"), { ok: false, reason: "denied_pattern" });
   assert.deepEqual(await dial("14155550100"), { ok: false, reason: "prefix" });
-  assert.deepEqual(calls, ["61412345678"], "denied calls never reach the dialer");
+  assert.deepEqual(calls, [{ to: "61412345678" }], "denied calls never reach the dialer");
 
   const throwing = withDialGate(undefined, () => Promise.reject(new Error("boom")));
   assert.deepEqual(await throwing("61412345678"), { ok: false, reason: "dialer_error" });
+});
+
+test("withDialGate: client_state and command_id pass through to the dialer", async () => {
+  const seen: ({ to: string } & { client_state?: string; command_id?: string })[] = [];
+  const inner = async (
+    to: string,
+    opts?: { client_state?: string; command_id?: string },
+  ): Promise<DialResult> => {
+    seen.push({ to, ...opts });
+    return { ok: true, call_control_id: "cc" };
+  };
+  const dial = withDialGate(undefined, inner);
+  await dial("61412345678", { client_state: "QUJD", command_id: "ring-JA4F7C-1" });
+  assert.deepEqual(seen, [{ to: "61412345678", client_state: "QUJD", command_id: "ring-JA4F7C-1" }]);
 });

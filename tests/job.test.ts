@@ -9,7 +9,7 @@ import { JobActor } from "../src/actors/JobActor.js";
 // deleteAlarm/delete) like the real Stateful Actor storage.
 type CtorArgs = ConstructorParameters<typeof JobActor>;
 
-function makeActor() {
+function makeActor(env: Record<string, unknown> = {}) {
   const map = new Map<string, unknown>();
   let alarmAt: number | null = null;
   let deleteCount = 0;
@@ -42,9 +42,24 @@ function makeActor() {
   };
   const actor = new JobActor(
     { storage } as unknown as CtorArgs[0],
-    {} as unknown as CtorArgs[1],
+    env as unknown as CtorArgs[1],
   );
   return { actor, map, alarm: () => alarmAt, deleteCount: () => deleteCount };
+}
+
+// Capture log lines for the duration of fn, then restore the file-wide mute.
+async function captureLogs(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const prior = console.log;
+  console.log = (m: unknown) => {
+    lines.push(String(m));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = prior;
+  }
+  return lines;
 }
 
 // Mute the structured logger (console.log) for the whole file.
@@ -282,4 +297,124 @@ test("ringEvent marks dispatch_state ringing through an escalation (reserving)",
   const r = await actor.ringEvent({ type: "gather", call_control_id: "cc1", digits: "2", event_id: "e2", now: 1003 });
   assert.equal(r.state?.status, "reserving");
   assert.equal((await actor.get())?.dispatch_state, "ringing");
+});
+
+// D20-5e: a due ring_at no longer dials from the actor — the alarm POSTs the
+// stored callback URL (ring_cb) with the single-use token and stamps the
+// response reason; the FUNCTION then runs startRing. fetch is stubbed; no
+// network. The constant-time token check is consumeRingToken.
+const RING_TOKEN = "0123456789abcdef0123456789abcdef";
+const RING_CB = "https://cb.example/ring-start";
+
+// Replace global fetch for the duration of fn, then restore.
+async function withFetch(
+  fake: (url: string, init?: RequestInit) => Promise<Response>,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const prior = globalThis.fetch;
+  globalThis.fetch = ((input: unknown, init?: RequestInit) =>
+    fake(String(input), init)) as typeof fetch;
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = prior;
+  }
+}
+
+test("consumeRingToken: true once then false (replay); wrong token and a started ring false", async () => {
+  const { actor } = makeActor();
+  assert.equal(await actor.consumeRingToken(RING_TOKEN), false, "no record is false");
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() + 60_000, { token: RING_TOKEN, cb: RING_CB });
+  assert.equal(await actor.consumeRingToken("ffffffffffffffffffffffffffffffff"), false, "wrong token");
+  assert.equal(await actor.consumeRingToken(RING_TOKEN), true);
+  assert.equal((await actor.get())?.ring_token, undefined, "token spent on success");
+  assert.equal(await actor.consumeRingToken(RING_TOKEN), false, "replay is false");
+  // A ring that already started (status not idle) rejects even a fresh token.
+  const { actor: started } = makeActor();
+  await started.open(openArgs);
+  await started.setRingAt(Date.now() + 60_000, { token: RING_TOKEN });
+  await started.ringEvent({ type: "start", mode: "live", candidates: ["t1"], now: 1 });
+  assert.equal(await started.consumeRingToken(RING_TOKEN), false, "ring already started");
+});
+
+test("alarm POSTs the stored ring_cb with the token and persists the reason; redelivery posts nothing", async () => {
+  const { actor, deleteCount } = makeActor();
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() - 1, { token: RING_TOKEN, cb: RING_CB });
+  const posts: Array<{ url: string; body: unknown }> = [];
+  const stub = async (url: string, init?: RequestInit) => {
+    posts.push({ url, body: JSON.parse(String(init?.body)) as unknown });
+    return new Response(JSON.stringify({ ok: true, reason: "ok" }), { status: 200 });
+  };
+  const lines = await captureLogs(() =>
+    withFetch(stub, async () => {
+      await actor.alarm();
+      await actor.alarm(); // redelivery: ring_at already consumed
+    }),
+  );
+  assert.equal(posts.length, 1, "one callback POST per job");
+  assert.equal(posts[0].url, RING_CB);
+  assert.deepEqual(posts[0].body, { call_ref: "call", token: RING_TOKEN });
+  const rec = await actor.get();
+  assert.ok(rec !== null, "a ring alarm never deletes the job");
+  assert.equal(rec?.ring_at, undefined, "ring_at consumed before the POST");
+  assert.equal(rec?.ring_start_reason, "ok");
+  assert.equal(typeof rec?.ring_alarm_ran_at, "number");
+  assert.equal(rec?.dispatch_state, undefined, "an ok start leaves dispatch_state untouched");
+  assert.equal(deleteCount(), 0);
+  assert.ok(!lines.join("\n").includes(RING_TOKEN), "token never logged");
+});
+
+test("alarm with a mode_off response stamps mode_off and leaves dispatch_state unchanged", async () => {
+  const { actor } = makeActor();
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() - 1, { token: RING_TOKEN, cb: RING_CB });
+  await withFetch(
+    () => Promise.resolve(new Response(JSON.stringify({ ok: true, reason: "mode_off" }), { status: 200 })),
+    () => actor.alarm(),
+  );
+  const rec = await actor.get();
+  assert.equal(rec?.ring_start_reason, "mode_off");
+  assert.equal(typeof rec?.ring_alarm_ran_at, "number");
+  assert.equal(rec?.dispatch_state, undefined, "mode off leaves dispatch_state unchanged");
+});
+
+test("a failed callback (fetch throw or non-200) is callback_error + unassigned; the alarm never throws", async () => {
+  const { actor } = makeActor();
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() - 1, { token: RING_TOKEN, cb: RING_CB });
+  await withFetch(() => Promise.reject(new TypeError("no net")), () => actor.alarm());
+  const rec = await actor.get();
+  assert.ok(rec !== null, "the job survives a failed callback");
+  assert.equal(rec?.ring_at, undefined, "ring_at was consumed before the POST");
+  assert.equal(rec?.ring_start_reason, "callback_error");
+  assert.equal(rec?.dispatch_state, "unassigned", "a failed start never sits silently briefed");
+  assert.equal(typeof rec?.ring_alarm_ran_at, "number");
+  // A non-200 response is the same reason.
+  const { actor: a2 } = makeActor();
+  await a2.open(openArgs);
+  await a2.setRingAt(Date.now() - 1, { token: RING_TOKEN, cb: RING_CB });
+  await withFetch(() => Promise.resolve(new Response("boom", { status: 500 })), () => a2.alarm());
+  const rec2 = await a2.get();
+  assert.equal(rec2?.ring_start_reason, "callback_error");
+  assert.equal(rec2?.dispatch_state, "unassigned");
+});
+
+test("retention due still deletes first and makes no callback even with ring_at pending", async () => {
+  const { actor, map, deleteCount } = makeActor();
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() + 60_000, { token: RING_TOKEN, cb: RING_CB });
+  map.set("job", { ...(map.get("job") as Record<string, unknown>), retention_at: Date.now() - 1 });
+  let calls = 0;
+  await withFetch(
+    () => {
+      calls++;
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, reason: "ok" }), { status: 200 }));
+    },
+    () => actor.alarm(),
+  );
+  assert.equal(await actor.get(), null);
+  assert.equal(deleteCount(), 1);
+  assert.equal(calls, 0, "retention wins; the callback never fires");
 });

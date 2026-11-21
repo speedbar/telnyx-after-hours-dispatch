@@ -13,10 +13,18 @@ import {
   type RingEvent,
   type RingState,
 } from "../lib/ring.js";
+import type { RingStartReason } from "../lib/ringstart";
+import type { ManagerSmsStatus, SmsStatus } from "../lib/sms.js";
+import { tokenEqual } from "../routes/seed";
 
 type JobState = "reserved" | "briefed" | "released";
 // D20: where the technician ring stands; JobState stays untouched (spec 1.1).
 type DispatchState = "ringing" | "dispatched" | "unassigned";
+// D20-5f: why the last ring-start callback POST failed. Only timeout and
+// network are ever retried (once); an HTTP status or bad body never is.
+type RingCbError = "timeout" | "network" | `http_${number}` | "bad_body" | "no_cb";
+const RING_CB_TIMEOUT_MS = 8000;
+const RING_CB_RETRY_MS = 500;
 
 interface JobRecord {
   call_ref: string;
@@ -36,8 +44,27 @@ interface JobRecord {
   flags?: string[]; // soft-validation flag names for human review; names only
   ring?: RingState; // D20: per-job ring state machine snapshot
   dispatch_state?: DispatchState;
+  // D20b-1: accept-SMS outcome. Status word and timestamp only — never the
+  // recipient number, name or the message body.
+  sms_status?: SmsStatus;
+  sms_at?: number;
+  // D20c: manager-alert SMS outcome. Status word and timestamp only — never
+  // the manager number or the message body.
+  manager_sms_status?: ManagerSmsStatus;
+  manager_sms_at?: number;
   retention_at?: number; // ms epoch; absent on pre-D20 records means due now
   ring_at?: number; // ms epoch when the ring start is due (multiplexed alarm)
+  ring_alarm_ran_at?: number; // D20-5d: ms epoch the ring-start alarm last ran
+  ring_start_reason?: RingStartReason; // D20-5d: why that start (did not) run
+  // D20-5e: single-use token + absolute callback URL for POST /ring-start.
+  // Never logged, never returned anywhere; the token is deleted on use.
+  ring_token?: string;
+  ring_cb?: string;
+  // D20-5f: diagnostics of the last callback attempt. Hostname only — the
+  // token, path and full URL never land on the record or in a log line.
+  ring_cb_error?: RingCbError;
+  ring_cb_host?: string;
+  ring_cb_ms?: number;
   created_at: number;
   updated_at: number;
 }
@@ -215,15 +242,92 @@ export class JobActor extends StatefulActor {
     await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
-  // D20: schedule the ring start on the multiplexed alarm (spec 1.2).
-  async setRingAt(ms: number): Promise<{ ok: boolean }> {
+  // D20: schedule the ring start on the multiplexed alarm (spec 1.2). D20-5e:
+  // the single-use callback token and URL are stored beside ring_at for the
+  // alarm's POST to the function (present only from create_job's success path).
+  async setRingAt(
+    ms: number,
+    ring?: { token: string; cb?: string },
+  ): Promise<{ ok: boolean }> {
     if (!Number.isFinite(ms)) return { ok: false };
     const rec = await this.ctx.storage.get<JobRecord>("job");
     if (!rec) return { ok: false };
     rec.ring_at = ms;
+    if (ring !== undefined) {
+      rec.ring_token = ring.token;
+      if (ring.cb !== undefined) rec.ring_cb = ring.cb;
+    }
     rec.updated_at = Date.now();
     await this.ctx.storage.put("job", rec);
     await this._rearm(rec);
+    return { ok: true };
+  }
+
+  // D20-5e: atomic single-use check of the ring-start callback token. True
+  // only when the token matches (constant time) AND the ring is idle or
+  // unset; on true the token is deleted, so a replay (or a ring already
+  // started) can never start a second dial. Anything else is false.
+  async consumeRingToken(token: string): Promise<boolean> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec || typeof rec.ring_token !== "string") return false;
+    const status = rec.ring === undefined ? "idle" : rec.ring.status;
+    if (status !== "idle") return false;
+    if (!tokenEqual(token, rec.ring_token)) return false;
+    delete rec.ring_token;
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
+    return true;
+  }
+
+  // D20-5g: stamp the outcome of create_job's inline ring start. A start
+  // (started=true, any reason) cancels the alarm backstop — ring_at and the
+  // now-unusable token go — so a later alarm can never dial twice. A start
+  // that never ran keeps the alarm path for the caller to schedule, and the
+  // D20-5d safety net applies: not-ok and not-mode_off flips an unset
+  // dispatch_state to unassigned (capped/no_job/no_candidates arrive via
+  // runRing's own job_state effects instead).
+  async ringStarted(
+    reason: RingStartReason,
+    started: boolean,
+  ): Promise<{ ok: boolean }> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return { ok: false };
+    rec.ring_start_reason = reason;
+    if (started) {
+      delete rec.ring_at;
+      delete rec.ring_token;
+    } else if (reason !== "mode_off" && rec.dispatch_state === undefined) {
+      rec.dispatch_state = "unassigned";
+    }
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
+    await this._rearm(rec);
+    return { ok: true };
+  }
+
+  // D20b-1: stamp the accept-SMS outcome (one read-modify-write). Idempotent
+  // in practice: the accept transition — and so the sms_details effect —
+  // happens once per ring. No log line here; the runner logs the outcome.
+  async smsDone(args: { status: SmsStatus; at: number }): Promise<{ ok: boolean }> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return { ok: false };
+    rec.sms_status = args.status;
+    rec.sms_at = args.at;
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
+    return { ok: true };
+  }
+
+  // D20c: stamp the manager-alert outcome (same pattern as smsDone). The
+  // runner checks manager_sms_status before sending, so a duplicate webhook
+  // or a retry never texts twice; no log line here.
+  async managerSmsDone(args: { status: ManagerSmsStatus; at: number }): Promise<{ ok: boolean }> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return { ok: false };
+    rec.manager_sms_status = args.status;
+    rec.manager_sms_at = args.at;
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
     return { ok: true };
   }
 
@@ -257,11 +361,55 @@ export class JobActor extends StatefulActor {
     return { state: nextRing, effects };
   }
 
+  // One callback POST (D20-5f). Classifies every failure and measures the
+  // attempt; never throws and never logs — the body carries the token.
+  private async _ringCbPost(
+    url: string,
+    body: string,
+  ): Promise<{ ms: number; reason?: RingStartReason; error?: RingCbError }> {
+    const started = Date.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      ctrl.abort();
+    }, RING_CB_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        signal: ctrl.signal,
+      });
+      if (res.status !== 200) {
+        return { ms: Date.now() - started, error: `http_${res.status}` };
+      }
+      let data: { ok?: unknown; reason?: unknown };
+      try {
+        data = (await res.json()) as { ok?: unknown; reason?: unknown };
+      } catch {
+        return { ms: Date.now() - started, error: "bad_body" };
+      }
+      if (data.ok === true && typeof data.reason === "string") {
+        return { ms: Date.now() - started, reason: data.reason as RingStartReason };
+      }
+      return { ms: Date.now() - started, error: "bad_body" };
+    } catch (err) {
+      const aborted =
+        ctrl.signal.aborted || (err instanceof Error && err.name === "AbortError");
+      return { ms: Date.now() - started, error: aborted ? "timeout" : "network" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // Multiplexed alarm (D20): a due retention deletes the job record; a due
-  // ring_at is consumed (the dial itself is wired in D20-5) and never deletes.
-  // At-least-once delivery: every path is idempotent; a repeat is a no-op.
+  // ring_at is consumed FIRST (so a redelivered alarm cannot POST twice).
+  // D20-5e: the alarm keeps only the timing — the dial runs in the FUNCTION,
+  // which has the ring secrets the actor does not appear to see (V-020), so
+  // the alarm POSTs the stored callback URL with the single-use token and
+  // stamps the response reason. At-least-once delivery: every path is
+  // idempotent; a repeat is a no-op. The alarm never throws.
   async alarm(): Promise<void> {
-    const rec = await this.ctx.storage.get<JobRecord>("job");
+    let rec = await this.ctx.storage.get<JobRecord>("job");
     if (!rec) return; // already deleted: harmless repeat
     const now = Date.now();
     // Pre-D20 records carry no retention_at; their only alarm was retention.
@@ -275,6 +423,61 @@ export class JobActor extends StatefulActor {
       rec.updated_at = now;
       await this.ctx.storage.put("job", rec);
       log({ component: "actor", event: "ring_alarm_due", outcome: "ok", call_ref: this._callRef(), job_id: rec.job_id });
+      // D20-5f: POST the stored callback (8000 ms timeout). On timeout or
+      // network only, retry once after 500 ms with the same token — the token
+      // is single-use on the function side, so a duplicate can never start
+      // two rings: if the first attempt was processed the retry is 403 and
+      // the recorded reason stays http_403, never a second dial. The token
+      // goes in the body only and is never logged. Diagnostics stamped on
+      // the job: error class, callback hostname, last attempt elapsed ms.
+      let reason: RingStartReason = "callback_error";
+      let cbError: RingCbError | undefined;
+      let cbMs: number | undefined;
+      let cbHost: string | undefined;
+      if (rec.ring_cb !== undefined) {
+        try {
+          cbHost = new URL(rec.ring_cb).hostname;
+        } catch {
+          cbHost = undefined;
+        }
+      }
+      if (rec.ring_cb !== undefined && rec.ring_token !== undefined) {
+        const body = JSON.stringify({
+          call_ref: this._callRef(),
+          token: rec.ring_token,
+        });
+        let r = await this._ringCbPost(rec.ring_cb, body);
+        if (r.error === "timeout" || r.error === "network") {
+          await new Promise((resolve) => setTimeout(resolve, RING_CB_RETRY_MS));
+          r = await this._ringCbPost(rec.ring_cb, body);
+        }
+        cbMs = r.ms;
+        if (r.reason !== undefined) {
+          reason = r.reason;
+        } else {
+          cbError = r.error;
+        }
+      } else {
+        cbError = "no_cb";
+      }
+      // D20-5d: stamp why the start (did not) run. Re-read first: a start
+      // that ran wrote ring state via ringEvent, so rec is stale here. A
+      // failed or missing callback (not ok, not mode_off) also flips an
+      // otherwise-unset dispatch_state to unassigned — never silently briefed.
+      const fresh = await this.ctx.storage.get<JobRecord>("job");
+      if (fresh) {
+        fresh.ring_alarm_ran_at = Date.now();
+        fresh.ring_start_reason = reason;
+        if (cbError !== undefined) fresh.ring_cb_error = cbError;
+        if (cbHost !== undefined) fresh.ring_cb_host = cbHost;
+        if (cbMs !== undefined) fresh.ring_cb_ms = cbMs;
+        if (reason !== "ok" && reason !== "mode_off" && fresh.dispatch_state === undefined) {
+          fresh.dispatch_state = "unassigned";
+        }
+        fresh.updated_at = Date.now();
+        await this.ctx.storage.put("job", fresh);
+        rec = fresh;
+      }
     }
     await this._rearm(rec);
   }

@@ -41,12 +41,18 @@ const EXPECTED_KEYS = [
   "hop_brief_ms",
   "hop_mark_booked_ms",
   "hop_job_write_ms",
+  "hop_ring_ms",
   "flag_source",
   "boot_age_ms",
   "first_request",
+  "payload_status",
+  "hangup_cause",
+  "hangup_source",
+  "digits",
+  "sms_len",
 ];
 
-test("formatLine output parses as JSON with exactly the 35 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 41 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -80,9 +86,15 @@ test("formatLine output parses as JSON with exactly the 35 keys in order", () =>
       hop_brief_ms: 11,
       hop_mark_booked_ms: 2,
       hop_job_write_ms: 11,
+      hop_ring_ms: 1,
       flag_source: "cache",
       boot_age_ms: 12345,
       first_request: false,
+      payload_status: "answered",
+      hangup_cause: "normal_clearing",
+      hangup_source: "callee",
+      digits: "1",
+      sms_len: 142,
     },
     new Date("2026-11-18T00:00:00.000Z"),
   );
@@ -104,6 +116,11 @@ test("formatLine output parses as JSON with exactly the 35 keys in order", () =>
   assert.equal(parsed.flag_source, "cache");
   assert.equal(parsed.boot_age_ms, 12345);
   assert.equal(parsed.first_request, false);
+  assert.equal(parsed.payload_status, "answered");
+  assert.equal(parsed.hangup_cause, "normal_clearing");
+  assert.equal(parsed.hangup_source, "callee");
+  assert.equal(parsed.digits, "1");
+  assert.equal(parsed.sms_len, 142);
 });
 
 test("minimal fields: level defaults to info, every other field is null", () => {

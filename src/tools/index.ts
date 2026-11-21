@@ -8,6 +8,13 @@ import { handleCreateJob } from "./create_job";
 import { handleLookupCustomer } from "./lookup_customer";
 import { handleReleaseTechnician } from "./release_technician";
 import { handleReserveTechnician } from "./reserve_technician";
+import type {
+  RingStartReason,
+  StartRingEnv,
+  StartRingOpts,
+  StartRingResult,
+} from "../lib/ringstart";
+import type { RingDepsFactory } from "../routes/voice";
 
 export interface ToolResult {
   ok: boolean;
@@ -61,6 +68,10 @@ export interface JobStub {
     hazards?: string;
   }): Promise<{ ok: true; state: string } | { ok: false; reason: string }>;
   release(args: { job_id: string; reason: string }): Promise<{ released: boolean }>;
+  setRingAt(ms: number, ring?: { token: string; cb?: string }): Promise<{ ok: boolean }>;
+  // D20-5g: stamp an inline ring-start outcome (create_job calls it when the
+  // actor supports it; like markBooked it is optional on the stub).
+  ringStarted?(reason: RingStartReason, started: boolean): Promise<{ ok: boolean }>;
   get(): Promise<{
     job_id: string;
     tech_id: string;
@@ -77,8 +88,22 @@ export interface ToolEnv {
 
 // Per-call context resolved by the MCP route from tools/call _meta. The
 // conversation id (if Telnyx sends one) outranks any model-sent call_ref.
+// D20-5e: origin is this function's request origin, so create_job can store
+// the absolute POST /ring-start callback URL on the job; never logged.
+// D20-5g: env is the route's env object (the ring secrets live there),
+// passed the same way as origin. The ring fields are test-only seams for
+// create_job's inline start; the route never sets them.
 export interface ToolCtx {
   meta_conversation_id?: string;
+  origin?: string;
+  env?: { [key: string]: unknown };
+  startRingFn?: (
+    env: StartRingEnv,
+    callActor: string,
+    opts?: StartRingOpts,
+  ) => Promise<StartRingResult>;
+  ringDepsFor?: RingDepsFactory;
+  ringTimeoutMs?: number;
 }
 
 export type ToolHandler = (

@@ -7,7 +7,19 @@
 
 export type LogLevel = "info" | "warn" | "error";
 export type Component = "dv" | "mcp" | "actor" | "events" | "ops";
-export type Outcome = "ok" | "fail" | "degraded" | "rejected";
+// D20 widens outcome with the ring outcomes (ring_outcome lines): values
+// only, the fixed key list above is unchanged.
+export type Outcome =
+  | "ok"
+  | "fail"
+  | "degraded"
+  | "rejected"
+  | "accepted"
+  | "declined"
+  | "no_answer"
+  | "no_input"
+  | "hung_up"
+  | "dial_failed";
 
 // Deliberately NO field for a raw phone number.
 export interface LogFields {
@@ -42,9 +54,17 @@ export interface LogFields {
   hop_brief_ms?: number;
   hop_mark_booked_ms?: number; // S1.9b
   hop_job_write_ms?: number; // S1.9b: same await as hop_brief_ms (the job write)
+  hop_ring_ms?: number; // D20-5b: the setRingAt schedule call in create_job
   flag_source?: "kv" | "cache" | "default" | "timeout"; // S1.9b: where the flag came from
   boot_age_ms?: number; // S1.9b: ms since this instance's module boot
   first_request?: boolean; // S1.9b: true exactly once per instance
+  // D20 /voice-events payload-shape diagnostics (voice_event lines): short
+  // enum-like payload values only — never a number, client_state or body.
+  payload_status?: string;
+  hangup_cause?: string;
+  hangup_source?: string;
+  digits?: string; // gathered digits, at most 3 chars
+  sms_len?: number; // D20b-1: dry-run SMS body length (never the body itself)
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -89,9 +109,15 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     hop_brief_ms: fields.hop_brief_ms ?? null,
     hop_mark_booked_ms: fields.hop_mark_booked_ms ?? null,
     hop_job_write_ms: fields.hop_job_write_ms ?? null,
+    hop_ring_ms: fields.hop_ring_ms ?? null,
     flag_source: fields.flag_source ?? null,
     boot_age_ms: fields.boot_age_ms ?? null,
     first_request: fields.first_request ?? null,
+    payload_status: fields.payload_status ?? null,
+    hangup_cause: fields.hangup_cause ?? null,
+    hangup_source: fields.hangup_source ?? null,
+    digits: fields.digits ?? null,
+    sms_len: fields.sms_len ?? null,
   });
 }
 
@@ -110,6 +136,7 @@ export interface ToolLogCtx {
   hop_brief_ms?: number;
   hop_mark_booked_ms?: number;
   hop_job_write_ms?: number;
+  hop_ring_ms?: number;
   flag_source?: "kv" | "cache" | "default" | "timeout";
   eligible_count?: number;
 }

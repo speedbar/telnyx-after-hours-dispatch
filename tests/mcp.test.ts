@@ -325,8 +325,10 @@ test("11. tools/call: _meta conversation id wins, meta key names logged (never v
     body = await res.json();
 
     assert.deepEqual(seen, [
-      { meta_conversation_id: "conv-9z8y7x" },
-      { meta_conversation_id: "alt-conv-id" },
+      // D20-5e: handlers also receive the request origin (ring callback URL).
+      // D20-5g: and the route env (create_job's inline ring needs the secrets).
+      { meta_conversation_id: "conv-9z8y7x", origin: "https://test.invalid", env },
+      { meta_conversation_id: "alt-conv-id", origin: "https://test.invalid", env },
     ]);
 
     const logs = parsed(cap.lines).filter((l) => l.event === "mcp_call");
