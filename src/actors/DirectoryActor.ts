@@ -28,29 +28,6 @@ export class DirectoryActor extends StatefulActor {
     return (await this.ctx.storage.get<string>(keys.flag(name))) ?? null;
   }
 
-  // TEMPORARY (removed in D20-3): D20-0 spike — can an actor fetch out?
-  // Same probe as the function side (src/routes/egresstest.ts): GET the
-  // Telnyx balance endpoint with NO Authorization header and a 3000 ms
-  // abort; returns {status, ms} or {error: <name>, ms}; body never read.
-  async probe(): Promise<{ status?: number; error?: string; ms: number }> {
-    const start = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
-    try {
-      const res = await fetch("https://api.telnyx.com/v2/balance", {
-        signal: controller.signal,
-      });
-      return { status: res.status, ms: Date.now() - start };
-    } catch (err) {
-      return {
-        error: err instanceof Error ? err.name : "unknown",
-        ms: Date.now() - start,
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
   // D20: per-day counter in actor storage under a UTC-day key (the ring daily
   // cap). One read-modify-write; over cap returns ok:false without writing.
   async bumpCounter(name: string, cap: number): Promise<{ ok: boolean; count: number }> {

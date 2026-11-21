@@ -3,7 +3,6 @@ import { handleDv } from "./routes/dv";
 import { handleMcp } from "./routes/mcp";
 import { handleSeed } from "./routes/seed";
 import { handleTech } from "./routes/tech";
-import { handleEgressTest } from "./routes/egresstest";
 
 // Re-export the actor classes from the entry point so they are bundled and
 // shipped with the function (the runtime resolves each [[actors]] type here;
@@ -24,6 +23,11 @@ export default {
           LOG_SALT: readConfig(env, "LOG_SALT") !== undefined,
           MCP_TOKEN: readConfig(env, "MCP_TOKEN") !== undefined,
           FALLBACK_NUMBER: readConfig(env, "FALLBACK_NUMBER") !== undefined,
+          // D20 ring secrets (presence booleans only, never values).
+          TELNYX_API_KEY: readConfig(env, "TELNYX_API_KEY") !== undefined,
+          VOICE_CONNECTION_ID: readConfig(env, "VOICE_CONNECTION_ID") !== undefined,
+          DISPATCH_FROM_NUMBER: readConfig(env, "DISPATCH_FROM_NUMBER") !== undefined,
+          TECH_PHONES_JSON: readConfig(env, "TECH_PHONES_JSON") !== undefined,
         },
       });
     }
@@ -44,11 +48,6 @@ export default {
     if (url.pathname === "/admin/tech") {
       // Same spread pattern as /admin/seed. Token check inside handleTech.
       return await handleTech(req, { ...env });
-    }
-    if (url.pathname === "/admin/egress-test") {
-      // TEMPORARY (removed in D20-3): D20-0 spike route. Same spread
-      // pattern as /admin/tech. Token check inside handleEgressTest.
-      return await handleEgressTest(req, { ...env });
     }
     return Response.json({ ok: false, error: "not_found" }, { status: 404 });
   },
