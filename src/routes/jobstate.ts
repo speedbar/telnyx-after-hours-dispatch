@@ -32,6 +32,9 @@ interface JobStateRecord {
   retention_at?: number;
   ring_alarm_ran_at?: number;
   ring_start_reason?: string;
+  ring_cb_error?: string;
+  ring_cb_host?: string;
+  ring_cb_ms?: number;
 }
 
 export interface JobStateEnv {
@@ -130,6 +133,9 @@ export async function handleJobState(
         retention_at: rec.retention_at,
         ring_alarm_ran_at: rec.ring_alarm_ran_at,
         ring_start_reason: rec.ring_start_reason,
+        ring_cb_error: rec.ring_cb_error,
+        ring_cb_host: rec.ring_cb_host,
+        ring_cb_ms: rec.ring_cb_ms,
       },
       { status: 200 },
     );

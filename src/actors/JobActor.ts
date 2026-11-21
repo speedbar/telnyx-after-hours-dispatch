@@ -19,6 +19,11 @@ import { tokenEqual } from "../routes/seed";
 type JobState = "reserved" | "briefed" | "released";
 // D20: where the technician ring stands; JobState stays untouched (spec 1.1).
 type DispatchState = "ringing" | "dispatched" | "unassigned";
+// D20-5f: why the last ring-start callback POST failed. Only timeout and
+// network are ever retried (once); an HTTP status or bad body never is.
+type RingCbError = "timeout" | "network" | `http_${number}` | "bad_body" | "no_cb";
+const RING_CB_TIMEOUT_MS = 8000;
+const RING_CB_RETRY_MS = 500;
 
 interface JobRecord {
   call_ref: string;
@@ -46,6 +51,11 @@ interface JobRecord {
   // Never logged, never returned anywhere; the token is deleted on use.
   ring_token?: string;
   ring_cb?: string;
+  // D20-5f: diagnostics of the last callback attempt. Hostname only — the
+  // token, path and full URL never land on the record or in a log line.
+  ring_cb_error?: RingCbError;
+  ring_cb_host?: string;
+  ring_cb_ms?: number;
   created_at: number;
   updated_at: number;
 }
@@ -290,6 +300,46 @@ export class JobActor extends StatefulActor {
     return { state: nextRing, effects };
   }
 
+  // One callback POST (D20-5f). Classifies every failure and measures the
+  // attempt; never throws and never logs — the body carries the token.
+  private async _ringCbPost(
+    url: string,
+    body: string,
+  ): Promise<{ ms: number; reason?: RingStartReason; error?: RingCbError }> {
+    const started = Date.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      ctrl.abort();
+    }, RING_CB_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        signal: ctrl.signal,
+      });
+      if (res.status !== 200) {
+        return { ms: Date.now() - started, error: `http_${res.status}` };
+      }
+      let data: { ok?: unknown; reason?: unknown };
+      try {
+        data = (await res.json()) as { ok?: unknown; reason?: unknown };
+      } catch {
+        return { ms: Date.now() - started, error: "bad_body" };
+      }
+      if (data.ok === true && typeof data.reason === "string") {
+        return { ms: Date.now() - started, reason: data.reason as RingStartReason };
+      }
+      return { ms: Date.now() - started, error: "bad_body" };
+    } catch (err) {
+      const aborted =
+        ctrl.signal.aborted || (err instanceof Error && err.name === "AbortError");
+      return { ms: Date.now() - started, error: aborted ? "timeout" : "network" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // Multiplexed alarm (D20): a due retention deletes the job record; a due
   // ring_at is consumed FIRST (so a redelivered alarm cannot POST twice).
   // D20-5e: the alarm keeps only the timing — the dial runs in the FUNCTION,
@@ -312,40 +362,42 @@ export class JobActor extends StatefulActor {
       rec.updated_at = now;
       await this.ctx.storage.put("job", rec);
       log({ component: "actor", event: "ring_alarm_due", outcome: "ok", call_ref: this._callRef(), job_id: rec.job_id });
-      // POST the stored callback (3000 ms timeout). The token goes in the
-      // body only and is never logged. Any failure (no callback stored,
-      // fetch throw, timeout, non-200, a body without ok+reason) is the
-      // single visible reason callback_error.
+      // D20-5f: POST the stored callback (8000 ms timeout). On timeout or
+      // network only, retry once after 500 ms with the same token — the token
+      // is single-use on the function side, so a duplicate can never start
+      // two rings: if the first attempt was processed the retry is 403 and
+      // the recorded reason stays http_403, never a second dial. The token
+      // goes in the body only and is never logged. Diagnostics stamped on
+      // the job: error class, callback hostname, last attempt elapsed ms.
       let reason: RingStartReason = "callback_error";
-      if (rec.ring_cb !== undefined && rec.ring_token !== undefined) {
+      let cbError: RingCbError | undefined;
+      let cbMs: number | undefined;
+      let cbHost: string | undefined;
+      if (rec.ring_cb !== undefined) {
         try {
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => {
-            ctrl.abort();
-          }, 3000);
-          let res: Response;
-          try {
-            res = await fetch(rec.ring_cb, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                call_ref: this._callRef(),
-                token: rec.ring_token,
-              }),
-              signal: ctrl.signal,
-            });
-          } finally {
-            clearTimeout(timer);
-          }
-          if (res.status === 200) {
-            const data = (await res.json()) as { ok?: unknown; reason?: unknown };
-            if (data.ok === true && typeof data.reason === "string") {
-              reason = data.reason as RingStartReason;
-            }
-          }
+          cbHost = new URL(rec.ring_cb).hostname;
         } catch {
-          reason = "callback_error";
+          cbHost = undefined;
         }
+      }
+      if (rec.ring_cb !== undefined && rec.ring_token !== undefined) {
+        const body = JSON.stringify({
+          call_ref: this._callRef(),
+          token: rec.ring_token,
+        });
+        let r = await this._ringCbPost(rec.ring_cb, body);
+        if (r.error === "timeout" || r.error === "network") {
+          await new Promise((resolve) => setTimeout(resolve, RING_CB_RETRY_MS));
+          r = await this._ringCbPost(rec.ring_cb, body);
+        }
+        cbMs = r.ms;
+        if (r.reason !== undefined) {
+          reason = r.reason;
+        } else {
+          cbError = r.error;
+        }
+      } else {
+        cbError = "no_cb";
       }
       // D20-5d: stamp why the start (did not) run. Re-read first: a start
       // that ran wrote ring state via ringEvent, so rec is stale here. A
@@ -355,6 +407,9 @@ export class JobActor extends StatefulActor {
       if (fresh) {
         fresh.ring_alarm_ran_at = Date.now();
         fresh.ring_start_reason = reason;
+        if (cbError !== undefined) fresh.ring_cb_error = cbError;
+        if (cbHost !== undefined) fresh.ring_cb_host = cbHost;
+        if (cbMs !== undefined) fresh.ring_cb_ms = cbMs;
         if (reason !== "ok" && reason !== "mode_off" && fresh.dispatch_state === undefined) {
           fresh.dispatch_state = "unassigned";
         }

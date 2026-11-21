@@ -64,3 +64,6 @@ Date: 21 Nov 2026 (D20-5d). sim-alarm-1 consumed ring_at but left no ring state 
 
 ### V-020 Ring start moved from the actor alarm to a function callback
 Date: 21 Nov 2026 (D20-5e). The ring start moved from the JobActor alarm to a function callback (POST /ring-start with a single-use token) because the actor did not appear to have the function's secrets (TELNYX_API_KEY, VOICE_CONNECTION_ID, DISPATCH_FROM_NUMBER, TECH_PHONES_JSON) — inferred from a first-call no-ring with 0.4 s ring stamps, not directly proven. The move also puts the next failure in visible function logs (actor logs are not; V-018). Status: INFERRED, pending the live check in the slice spec.
+
+### V-021 What ring_cb_error / ring_cb_host showed on the first live run
+Date: 21 Nov 2026 (D20-5f). The alarm now stamps ring_cb_error (timeout | network | http_<status> | bad_body | no_cb), ring_cb_host (hostname only) and ring_cb_ms on the job, and /admin/job-state returns them; the callback timeout is 8000 ms with one retry (after 500 ms) on timeout or network only. First live run on d20-ring-live: result: pending (until Nabeel reports it).
