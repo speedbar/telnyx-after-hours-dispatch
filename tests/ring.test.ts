@@ -316,18 +316,35 @@ test("parseAllowedPrefixes: csv or the +61 default", () => {
 });
 
 test("withDialGate: denied numbers never reach the dialer; errors are data", async () => {
-  const calls: string[] = [];
-  const inner = async (to: string): Promise<DialResult> => {
-    calls.push(to);
+  const calls: { to: string; opts?: { client_state?: string; command_id?: string } }[] = [];
+  const inner = async (
+    to: string,
+    opts?: { client_state?: string; command_id?: string },
+  ): Promise<DialResult> => {
+    calls.push({ to, ...(opts !== undefined ? { opts } : {}) });
     return { ok: true, call_control_id: "cc" };
   };
   const dial = withDialGate(undefined, inner);
   assert.deepEqual(await dial("61412345678"), { ok: true, call_control_id: "cc" });
-  assert.deepEqual(calls, ["61412345678"]);
+  assert.deepEqual(calls, [{ to: "61412345678" }]);
   assert.deepEqual(await dial("611900123456"), { ok: false, reason: "denied_pattern" });
   assert.deepEqual(await dial("14155550100"), { ok: false, reason: "prefix" });
-  assert.deepEqual(calls, ["61412345678"], "denied calls never reach the dialer");
+  assert.deepEqual(calls, [{ to: "61412345678" }], "denied calls never reach the dialer");
 
   const throwing = withDialGate(undefined, () => Promise.reject(new Error("boom")));
   assert.deepEqual(await throwing("61412345678"), { ok: false, reason: "dialer_error" });
+});
+
+test("withDialGate: client_state and command_id pass through to the dialer", async () => {
+  const seen: ({ to: string } & { client_state?: string; command_id?: string })[] = [];
+  const inner = async (
+    to: string,
+    opts?: { client_state?: string; command_id?: string },
+  ): Promise<DialResult> => {
+    seen.push({ to, ...opts });
+    return { ok: true, call_control_id: "cc" };
+  };
+  const dial = withDialGate(undefined, inner);
+  await dial("61412345678", { client_state: "QUJD", command_id: "ring-JA4F7C-1" });
+  assert.deepEqual(seen, [{ to: "61412345678", client_state: "QUJD", command_id: "ring-JA4F7C-1" }]);
 });

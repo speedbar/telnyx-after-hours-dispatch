@@ -7,7 +7,19 @@
 
 export type LogLevel = "info" | "warn" | "error";
 export type Component = "dv" | "mcp" | "actor" | "events" | "ops";
-export type Outcome = "ok" | "fail" | "degraded" | "rejected";
+// D20 widens outcome with the ring outcomes (ring_outcome lines): values
+// only, the fixed key list above is unchanged.
+export type Outcome =
+  | "ok"
+  | "fail"
+  | "degraded"
+  | "rejected"
+  | "accepted"
+  | "declined"
+  | "no_answer"
+  | "no_input"
+  | "hung_up"
+  | "dial_failed";
 
 // Deliberately NO field for a raw phone number.
 export interface LogFields {

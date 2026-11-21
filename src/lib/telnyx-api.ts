@@ -202,7 +202,7 @@ export function makeTelnyxClient(env: unknown, fetchImpl: FetchLike = fetch): Te
 // out. NOT wrapped in withDialGate here — the caller composes the gate.
 export function makeDialer(env: unknown, fetchImpl: FetchLike = fetch): Dialer {
   const client = makeTelnyxClient(env, fetchImpl);
-  return async (toDigits: string): Promise<DialResult> => {
+  return async (toDigits, opts) => {
     const connectionId = readConfig(env, "VOICE_CONNECTION_ID");
     const fromRaw = readConfig(env, "DISPATCH_FROM_NUMBER");
     if (connectionId === undefined || fromRaw === undefined) {
@@ -216,6 +216,8 @@ export function makeDialer(env: unknown, fetchImpl: FetchLike = fetch): Dialer {
       from,
       timeout_secs: 25,
       time_limit_secs: 120,
+      ...(opts?.client_state !== undefined ? { client_state: opts.client_state } : {}),
+      ...(opts?.command_id !== undefined ? { command_id: opts.command_id } : {}),
     });
   };
 }

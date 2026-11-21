@@ -20,7 +20,14 @@ export interface DialResult {
   reason?: string;
 }
 
-export type Dialer = (toDigits: string) => Promise<DialResult>;
+// Optional metadata for the Telnyx Dial command (spec section 6): the gated
+// wrapper passes these straight through to the injected dialer.
+export interface DialerOpts {
+  client_state?: string;
+  command_id?: string;
+}
+
+export type Dialer = (toDigits: string, opts?: DialerOpts) => Promise<DialResult>;
 
 // Denied right after the country code: 1900 premium, 13/18 service, and the
 // AU emergency or relay numbers 000 / 112 / 106. Applies even inside "+61".
@@ -56,11 +63,11 @@ export function withDialGate(
   const prefixes = Array.isArray(rawPrefixes)
     ? rawPrefixes
     : parseAllowedPrefixes(rawPrefixes);
-  return async (toDigits: string): Promise<DialResult> => {
+  return async (toDigits: string, opts?: DialerOpts): Promise<DialResult> => {
     const check = checkDialAllowed(toE164(toDigits), prefixes);
     if (!check.allowed) return { ok: false, reason: check.reason };
     try {
-      return await dialer(toDigits);
+      return await dialer(toDigits, opts);
     } catch {
       return { ok: false, reason: "dialer_error" };
     }

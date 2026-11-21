@@ -157,6 +157,23 @@ test("makeDialer: missing VOICE_CONNECTION_ID -> no_config, fetch untouched", as
   assert.equal(cap.length, 0);
 });
 
+test("makeDialer: client_state and command_id opts land in the dial body", async () => {
+  const cap: Captured[] = [];
+  const env = { ...ENV, VOICE_CONNECTION_ID: "conn-9", DISPATCH_FROM_NUMBER: "12125550000" };
+  const dial = makeDialer(env, fakeFetch(200, { data: { call_control_id: "ccid_9" } }, cap));
+  const r = await dial("61400000000", { client_state: "QUJD", command_id: "ring-JA4F7C-1" });
+  assert.deepEqual(r, { ok: true, call_control_id: "ccid_9" });
+  assert.deepEqual(bodyOf(cap[0]), {
+    connection_id: "conn-9",
+    to: "+61400000000",
+    from: "+12125550000",
+    timeout_secs: 25,
+    time_limit_secs: 120,
+    client_state: "QUJD",
+    command_id: "ring-JA4F7C-1",
+  });
+});
+
 test("client_state codec: round-trip survives, bad input is null", () => {
   const s = { c: "c:abc123", j: "JA4F7C", t: "tech-01", a: 2 };
   assert.deepEqual(decodeClientState(encodeClientState(s)), s);
