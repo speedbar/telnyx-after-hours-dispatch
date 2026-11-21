@@ -13,7 +13,7 @@ import {
   type RingEvent,
   type RingState,
 } from "../lib/ring.js";
-import { startRing, type StartRingEnv } from "../lib/ringstart";
+import { startRing, type RingStartReason, type StartRingEnv } from "../lib/ringstart";
 import { buildRingDeps, type RingDepsFactory } from "../routes/voice";
 
 type JobState = "reserved" | "briefed" | "released";
@@ -40,6 +40,8 @@ interface JobRecord {
   dispatch_state?: DispatchState;
   retention_at?: number; // ms epoch; absent on pre-D20 records means due now
   ring_at?: number; // ms epoch when the ring start is due (multiplexed alarm)
+  ring_alarm_ran_at?: number; // D20-5d: ms epoch the ring-start alarm last ran
+  ring_start_reason?: RingStartReason; // D20-5d: why that start (did not) run
   created_at: number;
   updated_at: number;
 }
@@ -264,7 +266,7 @@ export class JobActor extends StatefulActor {
   // ring), then startRing runs from inside the actor and never deletes.
   // At-least-once delivery: every path is idempotent; a repeat is a no-op.
   async alarm(): Promise<void> {
-    const rec = await this.ctx.storage.get<JobRecord>("job");
+    let rec = await this.ctx.storage.get<JobRecord>("job");
     if (!rec) return; // already deleted: harmless repeat
     const now = Date.now();
     // Pre-D20 records carry no retention_at; their only alarm was retention.
@@ -282,6 +284,7 @@ export class JobActor extends StatefulActor {
       // deps keep buildRingDeps but pin jobs to THIS actor's own methods —
       // calling its own stub would deadlock (no re-entrancy per actor id).
       // A failure is logged and must never throw out of the alarm.
+      let reason: RingStartReason = "run_error";
       try {
         const depsFor: RingDepsFactory = (env, callActor) => ({
           ...buildRingDeps(env, callActor),
@@ -290,7 +293,7 @@ export class JobActor extends StatefulActor {
             get: () => this.get(),
           },
         });
-        await startRing(this.env as unknown as StartRingEnv, this._callRef(), { depsFor });
+        reason = (await startRing(this.env as unknown as StartRingEnv, this._callRef(), { depsFor })).reason;
       } catch (err) {
         log({
           component: "actor",
@@ -301,6 +304,21 @@ export class JobActor extends StatefulActor {
           job_id: rec.job_id,
           error: err instanceof Error ? err.name : "unknown",
         });
+      }
+      // D20-5d: stamp why the start (did not) run. Re-read first: a start
+      // that ran wrote ring state via ringEvent, so rec is stale here. A
+      // skipped or failed start (not ok, not mode_off) also flips an
+      // otherwise-unset dispatch_state to unassigned — never silently briefed.
+      const fresh = await this.ctx.storage.get<JobRecord>("job");
+      if (fresh) {
+        fresh.ring_alarm_ran_at = Date.now();
+        fresh.ring_start_reason = reason;
+        if (reason !== "ok" && reason !== "mode_off" && fresh.dispatch_state === undefined) {
+          fresh.dispatch_state = "unassigned";
+        }
+        fresh.updated_at = Date.now();
+        await this.ctx.storage.put("job", fresh);
+        rec = fresh;
       }
     }
     await this._rearm(rec);

@@ -58,3 +58,6 @@ Date: 21 Nov 2026 (D20-5b Step 0). Checked before wiring startRing into JobActor
 
 ### V-018 Actor log lines in telnyx-edge logs; POST /admin/job-state is the check
 Date: 21 Nov 2026 (D20-5c). Actor log lines are not visible in telnyx-edge logs; the /admin/job-state route is the state-based check.
+
+### V-019 sim-alarm-1 consumed ring_at but left no ring state
+Date: 21 Nov 2026 (D20-5d). sim-alarm-1 consumed ring_at but left no ring state and the cause is unknown; this slice records ring_start_reason and ring_alarm_ran_at on the job for any recurrence.

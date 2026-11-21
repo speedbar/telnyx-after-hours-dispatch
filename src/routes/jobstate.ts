@@ -30,6 +30,8 @@ interface JobStateRecord {
   };
   ring_at?: number;
   retention_at?: number;
+  ring_alarm_ran_at?: number;
+  ring_start_reason?: string;
 }
 
 export interface JobStateEnv {
@@ -126,6 +128,8 @@ export async function handleJobState(
         ring_at_pending: rec.ring_at !== undefined,
         ring_at_overdue: rec.ring_at !== undefined && rec.ring_at <= now,
         retention_at: rec.retention_at,
+        ring_alarm_ran_at: rec.ring_alarm_ran_at,
+        ring_start_reason: rec.ring_start_reason,
       },
       { status: 200 },
     );

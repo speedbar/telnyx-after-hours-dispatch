@@ -161,6 +161,11 @@ test("mode resolution: missing/off/dry_run/live/garbage -> flag rules (1.7)", as
       });
       assert.equal(r.mode, c.wantMode, `flag ${String(c.flag)}`);
       assert.equal(r.started, c.started, `flag ${String(c.flag)}`);
+      assert.equal(
+        r.reason,
+        c.wantMode === "off" ? "mode_off" : "ok",
+        `flag ${String(c.flag)}`,
+      );
       if (c.wantMode === "off") {
         assert.equal(w.ringEvents.length, 0, "off never feeds an event");
         assert.ok(
@@ -200,6 +205,7 @@ test("cap hit: ring_capped log, empty candidates, job ends exhausted", async () 
     const r = await startRing(w.env, "call-SIM", { now: 1000, depsFor: w.depsFor });
     assert.equal(r.mode, "live");
     assert.equal(r.started, true);
+    assert.equal(r.reason, "capped");
     assert.deepEqual(w.bumpCalls, [{ name: "ring", cap: 20 }]);
     const ev = w.ringEvents[0];
     assert.ok(ev !== undefined && ev.type === "start");
@@ -251,6 +257,7 @@ test("missing job record: empty candidates, exhausted, never throws", async () =
   try {
     const r = await startRing(w.env, "call-SIM", { now: 1000, depsFor: w.depsFor });
     assert.equal(r.started, true);
+    assert.equal(r.reason, "no_job");
     const ev = w.ringEvents[0];
     assert.ok(ev !== undefined && ev.type === "start");
     assert.deepEqual(ev.candidates, []);
@@ -293,12 +300,78 @@ test("live start dials the reserved technician; no phone number appears in any l
   try {
     const r = await startRing(w.env, "call-SIM", { now: 1000, depsFor: w.depsFor });
     assert.equal(r.mode, "live");
+    assert.equal(r.reason, "ok");
     assert.deepEqual(w.dialCalls, [{ to: "61400000003" }], "dialled the reserved tech");
     assert.equal(w.state().status, "dialing");
     const joined = w.logs.map((l) => JSON.stringify(l)).join("\n");
     assert.ok(!joined.includes("61400000003"), "no technician number in logs");
     assert.ok(!joined.includes("61400000001"), "no other number in logs");
     assert.ok(w.logs.some((l) => l.event === "ring_start" && l.technician_id === "tech-03"));
+  } finally {
+    w.restore();
+  }
+});
+
+test("every candidate cooled down: reason no_candidates, job ends exhausted", async () => {
+  const w = makeWorld({
+    flag: "live",
+    lastRingAt: { "tech-03": 900, "tech-01": 900 }, // now is 1000
+  });
+  try {
+    const r = await startRing(w.env, "call-SIM", { now: 1000, depsFor: w.depsFor });
+    assert.equal(r.started, true);
+    assert.equal(r.reason, "no_candidates");
+    const ev = w.ringEvents[0];
+    assert.ok(ev !== undefined && ev.type === "start");
+    assert.deepEqual(ev.candidates, []);
+    assert.equal(w.state().status, "exhausted");
+  } finally {
+    w.restore();
+  }
+});
+
+test("deps build failure: reason deps_error, never throws, ring_start_fail logged", async () => {
+  const w = makeWorld({ flag: "live" });
+  try {
+    const r = await startRing(w.env, "call-SIM", {
+      now: 1000,
+      depsFor: () => {
+        throw new Error("deps boom");
+      },
+    });
+    assert.equal(r.started, false);
+    assert.equal(r.reason, "deps_error");
+    assert.equal(w.ringEvents.length, 0, "no event ever fed");
+    assert.ok(w.logs.some((l) => l.event === "ring_start_fail"), "ring_start_fail logged");
+  } finally {
+    w.restore();
+  }
+});
+
+test("unexpected throw in the run path: reason run_error, never throws, ring_start_fail logged", async () => {
+  // runRing itself never throws (its feeds catch internally), so reach the
+  // outer catch with a job whose trade getter throws inside buildCandidates.
+  const w = makeWorld({ flag: "live" });
+  try {
+    const base = w.depsFor();
+    const r = await startRing(w.env, "call-SIM", {
+      now: 1000,
+      depsFor: () => ({
+        ...base,
+        jobs: {
+          ...base.jobs,
+          get: async () =>
+            ({
+              get trade(): string {
+                throw new TypeError("run boom");
+              },
+            }) as unknown as RingJob,
+        },
+      }),
+    });
+    assert.equal(r.started, false);
+    assert.equal(r.reason, "run_error");
+    assert.ok(w.logs.some((l) => l.event === "ring_start_fail"), "ring_start_fail logged");
   } finally {
     w.restore();
   }

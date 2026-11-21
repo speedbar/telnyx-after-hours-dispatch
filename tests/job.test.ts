@@ -331,6 +331,9 @@ test("alarm with a due ring_at runs startRing once; redelivery is a no-op (dry_r
   assert.ok(rec !== null, "a ring alarm never deletes the job");
   assert.equal(rec?.ring_at, undefined, "ring_at consumed");
   assert.equal(rec?.ring?.status, "dry_run", "one dry-run start was fed");
+  assert.equal(rec?.ring_start_reason, "ok");
+  assert.equal(typeof rec?.ring_alarm_ran_at, "number");
+  assert.equal(rec?.dispatch_state, undefined, "a dry_run start leaves dispatch_state untouched");
   assert.equal(deleteCount(), 0);
   assert.ok(lines.some((l) => l.includes('"event":"ring_dry_run"')), "dry_run logged");
   await actor.alarm(); // redelivery
@@ -345,6 +348,9 @@ test("alarm with a due ring_at and ring_mode off logs off and starts nothing", a
   const lines = await captureLogs(() => actor.alarm());
   const rec = await actor.get();
   assert.equal(rec?.ring, undefined, "off feeds no reducer event");
+  assert.equal(rec?.ring_start_reason, "mode_off");
+  assert.equal(typeof rec?.ring_alarm_ran_at, "number");
+  assert.equal(rec?.dispatch_state, undefined, "mode off leaves dispatch_state unchanged");
   assert.equal(bumps.length, 0, "off never touches the cap");
   assert.ok(
     lines.some((l) => l.includes('"event":"ring_start"') && l.includes('"node":"off"')),
@@ -390,7 +396,52 @@ test("an error inside startRing logs ring_alarm_fail and never throws out of the
   const rec = await actor.get();
   assert.ok(rec !== null, "the job survives a failed start");
   assert.equal(rec?.ring_at, undefined, "ring_at was consumed before the start");
+  assert.equal(rec?.ring_start_reason, "run_error");
+  assert.equal(rec?.dispatch_state, "unassigned", "a failed start never sits silently briefed");
+  assert.equal(typeof rec?.ring_alarm_ran_at, "number");
   const failed = lines.filter((l) => l.includes('"event":"ring_alarm_fail"'));
   assert.equal(failed.length, 1, "ring_alarm_fail logged once");
   assert.ok(failed[0].includes('"error":"Error"'), "error name only");
+});
+
+test("alarm with the daily cap hit: reason capped, job ends exhausted and unassigned", async () => {
+  const capped = {
+    DIRECTORY: {
+      idFromName: () => ({
+        flag: async () => null, // dry_run
+        bumpCounter: async () => ({ ok: false, count: 20 }), // cap hit
+      }),
+    },
+  };
+  const { env } = dirEnv(null, capped);
+  const { actor } = makeActor(env);
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() - 1);
+  await captureLogs(() => actor.alarm());
+  const rec = await actor.get();
+  assert.ok(rec !== null);
+  assert.equal(rec?.ring_start_reason, "capped");
+  assert.equal(rec?.ring?.status, "exhausted", "a capped start feeds empty candidates");
+  assert.equal(rec?.dispatch_state, "unassigned");
+  assert.equal(typeof rec?.ring_alarm_ran_at, "number");
+});
+
+test("alarm with every candidate cooled down: reason no_candidates, exhausted, unassigned", async () => {
+  const cooling = {
+    TECH: {
+      idFromName: () => ({
+        status: async () => ({ last_ring_at: Date.now() }), // inside cooldown
+      }),
+    },
+  };
+  const { env } = dirEnv(null, cooling);
+  const { actor } = makeActor(env);
+  await actor.open(openArgs); // trade "plumber": the walk adds nobody, only tech-01
+  await actor.setRingAt(Date.now() - 1);
+  await captureLogs(() => actor.alarm());
+  const rec = await actor.get();
+  assert.ok(rec !== null);
+  assert.equal(rec?.ring_start_reason, "no_candidates");
+  assert.equal(rec?.ring?.status, "exhausted");
+  assert.equal(rec?.dispatch_state, "unassigned");
 });

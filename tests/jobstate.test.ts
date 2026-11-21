@@ -102,6 +102,8 @@ test("job with ring state: expected fields, hashed actor name, no PII", async ()
     details: "Knee-deep water by the stove",
     retention_at: past + 7 * 86_400_000,
     ring_at: past,
+    ring_alarm_ran_at: past + 500,
+    ring_start_reason: "ok",
     ring: {
       mode: "dry_run",
       status: "prompting",
@@ -140,6 +142,8 @@ test("job with ring state: expected fields, hashed actor name, no PII", async ()
     assert.equal(json.ring_at_pending, true);
     assert.equal(json.ring_at_overdue, true);
     assert.equal(json.retention_at, past + 7 * 86_400_000);
+    assert.equal(json.ring_alarm_ran_at, past + 500);
+    assert.equal(json.ring_start_reason, "ok");
 
     // Actor name resolved via resolveCallRef (hashed), never the raw value.
     assert.match(calls.names[0], /^c:[0-9a-f]{32}$/);

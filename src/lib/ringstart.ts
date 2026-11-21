@@ -37,6 +37,23 @@ export interface StartRingOpts {
   depsFor?: RingDepsFactory;
 }
 
+// D20-5d: why a ring start did (not) run, so a failed or skipped start leaves
+// a visible reason on the job (persisted by JobActor.alarm) instead of silence.
+export type RingStartReason =
+  | "ok"
+  | "mode_off"
+  | "capped"
+  | "no_job"
+  | "no_candidates"
+  | "deps_error"
+  | "run_error";
+
+export interface StartRingResult {
+  mode: RingMode;
+  started: boolean;
+  reason: RingStartReason;
+}
+
 // Bounded integer setting: the default when unset or not an integer in range.
 function intSetting(
   raw: string | undefined,
@@ -128,7 +145,7 @@ export async function startRing(
   env: StartRingEnv,
   callActor: string,
   opts: StartRingOpts = {},
-): Promise<{ mode: RingMode; started: boolean }> {
+): Promise<StartRingResult> {
   let mode: RingMode = "dry_run";
   try {
     const now = opts.now ?? Date.now();
@@ -136,13 +153,26 @@ export async function startRing(
     mode = opts.mode ?? (await readMode(env));
     if (mode === "off") {
       log({ component: "ops", event: "ring_start", node: "off", call_ref: callActor });
-      return { mode, started: false };
+      return { mode, started: false, reason: "mode_off" };
     }
-    const deps = depsFor(env, callActor);
+    // deps build failure is its own reason: no runRing ever ran.
+    let deps: ReturnType<RingDepsFactory>;
+    try {
+      deps = depsFor(env, callActor);
+    } catch (err) {
+      log({
+        component: "ops",
+        level: "error",
+        event: "ring_start_fail",
+        call_ref: callActor,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+      return { mode, started: false, reason: "deps_error" };
+    }
     if (await capBlocked(env)) {
       log({ component: "ops", event: "ring_capped", call_ref: callActor });
       await runRing(deps, callActor, { type: "start", mode, candidates: [], now });
-      return { mode, started: true };
+      return { mode, started: true, reason: "capped" };
     }
     let job: (RingJob & { tech_id?: unknown }) | null = null;
     try {
@@ -152,7 +182,9 @@ export async function startRing(
     }
     const candidates = await filterCooldown(deps, env, buildCandidates(job), now);
     await runRing(deps, callActor, { type: "start", mode, candidates, now });
-    return { mode, started: true };
+    const reason: RingStartReason =
+      job === null ? "no_job" : candidates.length === 0 ? "no_candidates" : "ok";
+    return { mode, started: true, reason };
   } catch (err) {
     log({
       component: "ops",
@@ -161,6 +193,6 @@ export async function startRing(
       call_ref: callActor,
       error: err instanceof Error ? err.name : "unknown",
     });
-    return { mode, started: false };
+    return { mode, started: false, reason: "run_error" };
   }
 }
