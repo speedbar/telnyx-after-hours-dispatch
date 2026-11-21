@@ -10,6 +10,7 @@
 
 import { log } from "./log";
 import { buildBrief } from "./brief";
+import { runAcceptSms, type AcceptSmsDeps, type SmsStatus } from "./sms";
 import { encodeClientState, type TelnyxClient } from "./telnyx-api";
 import { spoken } from "./validate";
 import type { TechPhones } from "./techphones";
@@ -30,6 +31,7 @@ export interface RingJob {
   customer_name?: string;
   address?: string;
   contact_phone?: string;
+  details?: string;
   hazards?: string;
   ring?: RingState;
 }
@@ -37,6 +39,8 @@ export interface RingJob {
 export interface RingJobs {
   ringEvent(event: RingEvent): Promise<{ state: RingState | null; effects: RingEffect[] }>;
   get(): Promise<RingJob | null>;
+  // D20b-1: optional stamp of the accept-SMS outcome (status word + time only).
+  smsDone?(args: { status: SmsStatus; at: number }): Promise<unknown>;
 }
 
 // TechnicianActor stub shape (real methods are structurally assignable).
@@ -71,6 +75,7 @@ export interface RunRingDeps {
   language: string;
   holdTtlS: number; // RING_HOLD_TTL_S per attempt; reserve and extendHold share it
   busyS: number; // DISPATCH_BUSY_S
+  sms?: AcceptSmsDeps; // D20b-1; absent = sms skipped (tests fail safe)
 }
 
 // Mutable leg context across the loop: ccid is the leg we currently have on
@@ -238,11 +243,7 @@ async function execute(
           urgency: job.urgency,
           trade: job.trade,
           suburb: job.suburb,
-          summary: job.summary,
-          ...(job.customer_name !== undefined ? { customer_name: job.customer_name } : {}),
           ...(job.address !== undefined ? { address: job.address } : {}),
-          ...(job.contact_phone !== undefined ? { contact_phone: job.contact_phone } : {}),
-          ...(job.hazards !== undefined ? { hazards: job.hazards } : {}),
         });
       } catch {
         effectLog(ctx, eff, false);
@@ -317,6 +318,41 @@ async function execute(
         const ok = r.ok === true;
         effectLog(ctx, eff, ok);
         if (!ok) failLog(ctx, eff.type, r.reason ?? "dispatch_failed", id);
+      } catch {
+        effectLog(ctx, eff, false);
+        failLog(ctx, eff.type, "exception", id);
+      }
+      return undefined;
+    }
+
+    case "sms_details": {
+      // D20b-1: text the accepting technician the full details. Runs outside
+      // the actor, is stamped on the job as a status word, and can never
+      // throw, block or undo the accept (the speech effect ran before us).
+      const id = eff.technician_id;
+      if (deps.sms === undefined) {
+        effectLog(ctx, eff, true);
+        log({
+          component: "ops",
+          event: "sms_skipped",
+          error: "no_deps",
+          call_ref: ctx.call_ref,
+          job_id: ctx.job_id,
+          technician_id: id,
+        });
+        return undefined;
+      }
+      try {
+        const job = await deps.jobs.get(); // PII feeds the SMS body, never a log
+        if (job !== null && ctx.job_id === "") ctx.job_id = job.job_id;
+        const status = await runAcceptSms(deps.sms, deps.phones, job, id, ctx);
+        effectLog(ctx, eff, status !== "failed");
+        if (status === "failed") failLog(ctx, eff.type, "sms_failed", id);
+        try {
+          await deps.jobs.smsDone?.({ status, at: Date.now() });
+        } catch {
+          // A stamp failure is silent: the accept outcome never depends on it.
+        }
       } catch {
         effectLog(ctx, eff, false);
         failLog(ctx, eff.type, "exception", id);

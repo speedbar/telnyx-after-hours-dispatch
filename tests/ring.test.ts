@@ -109,7 +109,7 @@ test("happy path: answered -> press 1 -> accepted with dispatch effects", () => 
   });
   assert.equal(s2.status, "accepted");
   assert.deepEqual(s2.outcome_log, [{ technician_id: "t1", outcome: "accepted", at: 1003 }]);
-  assert.deepEqual(types(eff2), ["log", "log", "log", "mark_dispatched", "job_state", "confirm_hangup"]);
+  assert.deepEqual(types(eff2), ["log", "log", "log", "mark_dispatched", "job_state", "confirm_hangup", "sms_details"]);
   assert.ok(logEvents(eff2).includes("ring_gather"));
   assert.ok(logEvents(eff2).includes("ring_accepted"));
 });

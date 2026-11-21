@@ -137,6 +137,7 @@ export type RingEffect =
   | { type: "release"; technician_id: string }
   | { type: "hangup_call" }
   | { type: "mark_dispatched"; technician_id: string }
+  | { type: "sms_details"; technician_id: string; attempt: number }
   | { type: "job_state"; state: "dispatched" | "unassigned" }
   | {
       type: "log";
@@ -391,6 +392,9 @@ export function reduceRing(
             { type: "mark_dispatched", technician_id: tech },
             { type: "job_state", state: "dispatched" },
             { type: "confirm_hangup" },
+            // D20b-1: the accepting technician is texted the full details,
+            // after the confirmation speech is issued; never before it.
+            { type: "sms_details", technician_id: tech, attempt: s.attempt },
           ],
         ];
       }

@@ -49,9 +49,10 @@ const EXPECTED_KEYS = [
   "hangup_cause",
   "hangup_source",
   "digits",
+  "sms_len",
 ];
 
-test("formatLine output parses as JSON with exactly the 40 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 41 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -93,6 +94,7 @@ test("formatLine output parses as JSON with exactly the 40 keys in order", () =>
       hangup_cause: "normal_clearing",
       hangup_source: "callee",
       digits: "1",
+      sms_len: 142,
     },
     new Date("2026-11-18T00:00:00.000Z"),
   );
@@ -118,6 +120,7 @@ test("formatLine output parses as JSON with exactly the 40 keys in order", () =>
   assert.equal(parsed.hangup_cause, "normal_clearing");
   assert.equal(parsed.hangup_source, "callee");
   assert.equal(parsed.digits, "1");
+  assert.equal(parsed.sms_len, 142);
 });
 
 test("minimal fields: level defaults to info, every other field is null", () => {

@@ -20,7 +20,8 @@ import {
   type ClientState,
 } from "../lib/telnyx-api";
 import { loadTechPhones } from "../lib/techphones";
-import { withDialGate, type RingEvent } from "../lib/ring";
+import { parseAllowedPrefixes, withDialGate, type RingEvent } from "../lib/ring";
+import { makeSmsSender, type AcceptSmsDeps, type SmsMode } from "../lib/sms";
 import {
   runRing,
   type RingJobs,
@@ -34,6 +35,39 @@ export interface VoiceEnv {
   JOBS?: { idFromName(name: string): RingJobs };
   TECH?: { idFromName(name: string): RingTech };
   [key: string]: unknown;
+}
+
+// D20b-1 accept-SMS deps: the sms_mode flag and daily counter live in the
+// DirectoryActor (same pattern as ring_mode / the ring cap). Missing binding
+// fails safe: dry_run mode reads, and the cap blocks the live send.
+interface SmsDirectory {
+  flag(name: string): Promise<string | null>;
+  bumpCounter(name: string, cap: number): Promise<{ ok: boolean; count: number }>;
+}
+
+function buildAcceptSmsDeps(env: VoiceEnv): AcceptSmsDeps {
+  const dir = (
+    env as { DIRECTORY?: { idFromName(name: string): SmsDirectory } }
+  ).DIRECTORY?.idFromName("directory");
+  return {
+    readMode: async (): Promise<SmsMode> => {
+      try {
+        const v = dir === undefined ? null : await dir.flag("sms_mode");
+        if (v === "off") return "off";
+        if (v === "live") return "live";
+        return "dry_run"; // missing key or any other value, as specified
+      } catch {
+        return "dry_run";
+      }
+    },
+    bumpCap: async () => {
+      if (dir === undefined) return false;
+      const cap = intSetting(readConfig(env, "SMS_DAILY_CAP"), 20, 1, 1000);
+      return (await dir.bumpCounter("sms", cap)).ok;
+    },
+    prefixes: parseAllowedPrefixes(readConfig(env, "ALLOWED_DIAL_PREFIXES")),
+    send: makeSmsSender(env),
+  };
 }
 
 // Deps factory so tests inject fakes; production uses buildRingDeps.
@@ -74,6 +108,7 @@ export function buildRingDeps(env: VoiceEnv, c: string): RunRingDeps {
     language: readConfig(env, "RING_TTS_LANGUAGE") ?? "en-US",
     holdTtlS: intSetting(readConfig(env, "RING_HOLD_TTL_S"), 60, 1, 600),
     busyS: intSetting(readConfig(env, "DISPATCH_BUSY_S"), 1800, 1, 86400),
+    sms: buildAcceptSmsDeps(env),
   };
 }
 

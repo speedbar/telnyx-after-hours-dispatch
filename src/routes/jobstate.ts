@@ -35,6 +35,8 @@ interface JobStateRecord {
   ring_cb_error?: string;
   ring_cb_host?: string;
   ring_cb_ms?: number;
+  sms_status?: string; // D20b-1 accept-SMS outcome word
+  sms_at?: number;
 }
 
 export interface JobStateEnv {
@@ -136,6 +138,8 @@ export async function handleJobState(
         ring_cb_error: rec.ring_cb_error,
         ring_cb_host: rec.ring_cb_host,
         ring_cb_ms: rec.ring_cb_ms,
+        sms_status: rec.sms_status,
+        sms_at: rec.sms_at,
       },
       { status: 200 },
     );

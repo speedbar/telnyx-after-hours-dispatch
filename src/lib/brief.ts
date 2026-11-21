@@ -2,6 +2,9 @@
 // Technician brief for the ring (D20): a pure template, no LLM. Job fields are
 // data, never instructions: control characters stripped, length-capped. Plain
 // text only (no SSML / tags), so nothing here can steer the speech model.
+// D20b-1: the spoken brief names only the urgency, trade, suburb, address and
+// reference — never the customer name or phone number; those go by SMS after
+// the technician accepts.
 
 import { spoken } from "./validate";
 
@@ -13,11 +16,7 @@ export interface BriefJob {
   urgency: string;
   trade: string;
   suburb: string;
-  summary: string;
-  customer_name?: string;
   address?: string;
-  contact_phone?: string; // normalised digits, read digit by digit
-  hazards?: string;
 }
 
 const CONTROL = new RegExp("[\\u0000-\\u001F\\u007F]", "g");
@@ -48,13 +47,9 @@ export function buildBrief(job: BriefJob): string {
   const parts: string[] = [];
   parts.push(`${field(job.urgency)} ${field(job.trade)} job in ${field(job.suburb)}.`);
   if (job.address !== undefined) parts.push(`Address ${field(job.address)}.`);
-  if (job.customer_name !== undefined) parts.push(`Customer ${field(job.customer_name)}.`);
-  if (job.contact_phone !== undefined) {
-    parts.push(`Callback number ${spokenCallback(job.contact_phone)}.`);
-  }
-  if (job.hazards !== undefined) parts.push(`Hazards: ${field(job.hazards)}.`);
-  parts.push(`Summary: ${field(job.summary)}.`);
   parts.push(`Reference ${spoken(job.job_id)}.`);
-  parts.push("Press 1 to accept. Press 2 to decline.");
+  parts.push(
+    "Press 1 to accept, 2 to decline. The customer details will be texted to you after you accept.",
+  );
   return parts.join(" ");
 }

@@ -64,6 +64,7 @@ export interface LogFields {
   hangup_cause?: string;
   hangup_source?: string;
   digits?: string; // gathered digits, at most 3 chars
+  sms_len?: number; // D20b-1: dry-run SMS body length (never the body itself)
 }
 
 export function formatLine(fields: LogFields, now: Date = new Date()): string {
@@ -116,6 +117,7 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     hangup_cause: fields.hangup_cause ?? null,
     hangup_source: fields.hangup_source ?? null,
     digits: fields.digits ?? null,
+    sms_len: fields.sms_len ?? null,
   });
 }
 
