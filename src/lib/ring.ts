@@ -115,6 +115,9 @@ export interface RingState {
   attempt: number; // 0 before start
   tried: string[];
   current?: RingCurrent;
+  // A declined leg awaiting its confirmation speech: the voice route hangs
+  // THIS ccid up on call.speak.ended (accept uses status === "accepted").
+  confirm_ccid?: string;
   seen_event_ids: string[]; // capped at SEEN_EVENTS_CAP
   outcome_log: RingOutcomeEntry[];
   candidates: string[];
@@ -133,7 +136,7 @@ export type RingEffect =
   | { type: "reserve"; technician_id: string }
   | { type: "dial"; technician_id: string; attempt: number }
   | { type: "gather_prompt" }
-  | { type: "confirm_hangup" }
+  | { type: "confirm_hangup"; decline?: boolean }
   | { type: "release"; technician_id: string }
   | { type: "hangup_call" }
   | { type: "mark_dispatched"; technician_id: string }
@@ -193,8 +196,9 @@ function guardWebhookEvent(
   return { state: s1, ok: true, effects: [] };
 }
 
-// One failed attempt: record outcome, release the technician, hang up the
-// answered leg (declined / no_input only), then escalate or exhaust.
+// One failed attempt: record outcome, release the technician, end the
+// answered leg (declined hears the thanks line, hung up on speak.ended via
+// confirm_ccid; no_input hangs up at once), then escalate or exhaust.
 function failAttempt(
   state: RingState,
   outcome: RingOutcome,
@@ -209,7 +213,10 @@ function failAttempt(
     { type: "log", event: "ring_outcome", technician_id: tech, attempt: state.attempt, outcome },
     { type: "release", technician_id: tech },
   ];
-  if (outcome === "declined" || outcome === "no_input") {
+  if (outcome === "declined") {
+    s1.confirm_ccid = state.current!.call_control_id;
+    effects.push({ type: "confirm_hangup", decline: true });
+  } else if (outcome === "no_input") {
     effects.push({ type: "hangup_call" });
   }
   const [s2, esc] = escalate(s1, now);

@@ -12,11 +12,16 @@ import { log } from "./log";
 import { buildBrief } from "./brief";
 import { runAcceptSms, type AcceptSmsDeps, type SmsStatus } from "./sms";
 import { encodeClientState, type TelnyxClient } from "./telnyx-api";
-import { spoken } from "./validate";
 import type { TechPhones } from "./techphones";
 import type { Dialer, RingEffect, RingEvent, RingState } from "./ring";
 
 export const RING_RUN_MAX_ITERATIONS = 8;
+
+// D20b-2: spoken confirmations, plain text only. Accept is followed by the
+// sms_details effect (same order as D20b-1); decline hangs up on speak.ended.
+export const ACCEPT_CONFIRM =
+  "Thank you. The customer details will be sent to you by text message. Goodbye.";
+export const DECLINE_CONFIRM = "No problem, thank you. Goodbye.";
 
 // Structural subset of the JobActor record the ring needs. `ring` carries the
 // pre-event machine snapshot: runRing is invoked per webhook event and the
@@ -71,7 +76,7 @@ export interface RunRingDeps {
   client: TelnyxClient;
   dialer: Dialer; // already wrapped in withDialGate by the caller
   phones: TechPhones;
-  voice: string;
+  voice?: string; // RING_VOICE; absent = no voice key in the request body
   language: string;
   holdTtlS: number; // RING_HOLD_TTL_S per attempt; reserve and extendHold share it
   busyS: number; // DISPATCH_BUSY_S
@@ -258,7 +263,7 @@ async function execute(
       try {
         const r = await deps.client.gatherUsingSpeak(ctx.ccid, {
           payload,
-          voice: deps.voice,
+          ...(deps.voice !== undefined ? { voice: deps.voice } : {}),
           language: deps.language,
         });
         const ok = r.ok === true;
@@ -361,8 +366,8 @@ async function execute(
     }
 
     case "confirm_hangup": {
-      // Speak the acceptance confirmation; the hangup itself is done later by
-      // the voice route on call.speak.ended (D20-4), not here.
+      // Speak the accept/decline confirmation; the hangup itself is done later
+      // by the voice route on call.speak.ended (D20-4), not here.
       if (ctx.ccid === undefined) {
         effectLog(ctx, eff, false);
         failLog(ctx, eff.type, "no_leg");
@@ -370,9 +375,8 @@ async function execute(
       }
       try {
         const r = await deps.client.speak(ctx.ccid, {
-          payload:
-            "Thank you. Job accepted. Reference " + spoken(ctx.job_id) + ". Goodbye.",
-          voice: deps.voice,
+          payload: eff.decline === true ? DECLINE_CONFIRM : ACCEPT_CONFIRM,
+          ...(deps.voice !== undefined ? { voice: deps.voice } : {}),
           language: deps.language,
         });
         const ok = r.ok === true;

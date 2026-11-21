@@ -8,12 +8,11 @@
 // the call always proceeds. Never logs the body, the phone number, the
 // signature or any secret — only the salted caller_hash.
 
+import { BUSINESS_NAME } from "../lib/brief";
 import { readConfig } from "../lib/config";
 import { bootFields, callerHash, log, newRequestId, timed } from "../lib/log";
 import { verifyTelnyx } from "../lib/sig";
 import { spoken } from "../lib/validate";
-
-const BUSINESS_NAME = "Harbour Trades After-Hours";
 
 // Spoken escalation number: digits of the FALLBACK_NUMBER secret, spoken one
 // character at a time. Unset (or no digits) degrades to "the office" + a warn.

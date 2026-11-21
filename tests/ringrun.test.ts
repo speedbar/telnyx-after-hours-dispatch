@@ -188,7 +188,7 @@ async function toPrompting(w: ReturnType<typeof makeWorld>, candidates: string[]
 
 // --- tests -------------------------------------------------------------------
 
-test("happy path: start -> answer -> accept dispatches and speaks the reference", async () => {
+test("happy path: start -> answer -> accept dispatches and speaks the confirmation", async () => {
   const w = makeWorld();
   try {
     await runRing(w.deps, "call-C1", start(["t1", "t2"]));
@@ -215,7 +215,10 @@ test("happy path: start -> answer -> accept dispatches and speaks the reference"
     assert.equal(w.techF.calls.get("t1")!.release.length, 0, "accepted technician never released");
     assert.equal(w.clientF.speak.length, 1);
     assert.equal(w.clientF.speak[0].ccid, CC1);
-    assert.ok(w.clientF.speak[0].payload.includes("Reference J A 4 F 7 C"));
+    assert.equal(
+      w.clientF.speak[0].payload,
+      "Thank you. The customer details will be sent to you by text message. Goodbye.",
+    );
     assert.deepEqual(w.jobsF.ringEvents.map((e) => e.type), ["start", "dial_result", "answered", "gather"]);
     assert.equal(w.jobsF.state().status, "accepted");
 
@@ -241,13 +244,17 @@ test("effect order: extend_hold -> dial -> gather -> dispatch -> speak", async (
   }
 });
 
-test("decline escalates to the second technician (release + hangup + reserve + dial)", async () => {
+test("decline escalates to the second technician (release + decline speech + reserve + dial)", async () => {
   const w = makeWorld();
   try {
     await toPrompting(w);
     await runRing(w.deps, "call-C1", gatherEv(CC1, "2", "e2"));
     assert.deepEqual(w.techF.calls.get("t1")!.release, [{ call_ref: "call-C1", job_id: "JA4F7C" }]);
-    assert.deepEqual(w.clientF.hangup, [CC1]);
+    assert.equal(w.clientF.speak.length, 1);
+    assert.equal(w.clientF.speak[0].ccid, CC1);
+    assert.equal(w.clientF.speak[0].payload, "No problem, thank you. Goodbye.");
+    assert.deepEqual(w.clientF.hangup, [], "the decline hangup waits for speak.ended");
+    assert.equal(w.jobsF.state().confirm_ccid, CC1);
     assert.deepEqual(w.techF.calls.get("t2")!.reserve, [{ call_ref: "call-C1", job_id: "JA4F7C", ttl_s: 60 }]);
     assert.deepEqual(w.techF.calls.get("t2")!.extendHold, [{ call_ref: "call-C1", job_id: "JA4F7C", ttl_s: 60 }]);
     assert.equal(w.dialerF.calls.length, 2);
@@ -356,7 +363,13 @@ test("two declines exhaust after 2 attempts with job_state unassigned", async ()
     assert.equal(w.jobsF.state().status, "exhausted");
     assert.deepEqual(w.jobsF.state().outcome_log.map((o) => o.outcome), ["declined", "declined"]);
     assert.equal(w.techF.calls.get("t2")!.dispatch.length, 0);
-    assert.deepEqual(w.clientF.hangup, [CC1, CC2]);
+    assert.deepEqual(
+      w.clientF.speak.map((s) => s.ccid),
+      [CC1, CC2],
+      "both declines get the confirmation speech",
+    );
+    assert.deepEqual(w.clientF.hangup, [], "both decline hangups wait for speak.ended");
+    assert.equal(w.jobsF.state().confirm_ccid, CC2);
     const flat = w.jobsF.effectBatches.flat();
     assert.ok(flat.some((e) => e.type === "job_state" && e.state === "unassigned"));
     const out = w.cap.lines.join("\n");
@@ -415,7 +428,7 @@ test("one failing effect never stops the rest and nothing throws", async () => {
   try {
     await toPrompting(w);
     await runRing(w.deps, "call-C1", gatherEv(CC1, "2", "e2")); // release t1 throws
-    assert.deepEqual(w.clientF.hangup, [CC1], "hangup_call still ran after release failed");
+    assert.equal(w.clientF.speak.length, 1, "decline speech still ran after release failed");
     assert.equal(w.techF.calls.get("t2")!.reserve.length, 1, "escalation still ran");
     assert.equal(w.dialerF.calls.length, 2, "t2 still dialled");
     assert.equal(w.jobsF.state().status, "dialing");

@@ -169,9 +169,9 @@ test("runner live: sends once to the technician, body has ref, name, callback, a
     assert.equal(w.sent.length, 1);
     assert.equal(w.sent[0].to, "+61400000001");
     const body = w.sent[0].text;
-    assert.ok(body.includes("JA4F7C") && body.includes("emergency plumber"));
-    assert.ok(body.includes("Sam Chen"), "customer name texted");
-    assert.ok(body.includes("Callback 0412345678"), "callback in local form");
+    assert.ok(body.includes("JA4F7C") && body.includes("Emergency plumber"));
+    assert.ok(body.includes("Customer: Sam Chen"), "customer name texted");
+    assert.ok(body.includes("Phone: 0412345678"), "callback in local form");
     assert.ok(body.includes("12 Example St"), "address texted");
     assert.ok(body.endsWith("Do not reply."));
     assert.ok(body.length <= SMS_MAX_LEN);
@@ -276,7 +276,10 @@ test("template: 320-char cap, details truncated, emoji stripped, cap respected",
   const body = buildAcceptSms(job);
   assert.ok(body.length <= SMS_MAX_LEN);
   assert.ok(body.endsWith("Do not reply."));
-  assert.ok(!/[^\x20-\x7E]/.test(body), "printable ASCII only");
+  assert.ok(
+    body.split("\n").every((line) => !/[^\x20-\x7E]/.test(line)),
+    "printable ASCII on every line",
+  );
   assert.ok(body.includes("Details: d"));
   const minimal = buildAcceptSms({
     job_id: "JA4F7C",
@@ -284,10 +287,10 @@ test("template: 320-char cap, details truncated, emoji stripped, cap respected",
     trade: "electrical",
     suburb: "Geelong",
   });
-  assert.ok(!minimal.includes("Customer") && !minimal.includes("Callback") && !minimal.includes("Address"));
+  assert.ok(!minimal.includes("Customer") && !minimal.includes("Phone:") && !minimal.includes("Address"));
 });
 
-test("brief: address and reference spoken, never the name or callback digits", () => {
+test("brief: urgency, trade, suburb and address spoken, never name, callback or reference", () => {
   const b = buildBrief({
     job_id: "JA4F7C",
     urgency: "emergency",
@@ -295,9 +298,10 @@ test("brief: address and reference spoken, never the name or callback digits", (
     suburb: "Richmond",
     address: "12 Example St",
   });
-  assert.ok(b.includes("12 Example St"));
-  assert.ok(b.includes("Reference J A 4 F 7 C"));
-  assert.ok(b.includes("texted to you after you accept"));
+  assert.ok(b.includes("Emergency plumber job in Richmond, 12 Example St."));
+  assert.ok(b.includes("Press 1 to accept, or 2 to decline"));
+  assert.ok(!b.includes("Reference") && !b.includes("JA4F7C"), "no reference");
+  assert.ok(!/text|sms/i.test(b), "the brief never mentions the SMS");
   assert.ok(!b.includes("Sam Chen"), "no customer name");
   assert.ok(!b.includes("61412345678") && !b.includes("0412345678"), "no callback digits");
   assert.ok(!b.includes("0 4 1 2 3 4 5 6 7 8"), "no spoken callback");

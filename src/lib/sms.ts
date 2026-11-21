@@ -7,6 +7,7 @@
 // log the reason class only. SMS never decides dispatch state: a failed or
 // skipped text changes nothing about the accept.
 
+import { BUSINESS_NAME } from "./brief";
 import { readConfig } from "./config";
 import { log } from "./log";
 import { checkDialAllowed } from "./ring";
@@ -56,39 +57,46 @@ function localDigits(digits: string): string {
     : digits;
 }
 
-// Reference, trade and urgency, customer name, callback, address, then
-// details/hazards truncated to fit the 320-char cap. Ends "Do not reply."
+// Capitalise only the first letter of a stored value; the rest stays as is.
+function capFirst(s: string): string {
+  return s === "" ? "" : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// One item per line: "{business} - Job {id}", "{Urgency} {Trade}" (stored
+// values, first letter capitalised, never mapped or validated), HAZARD (as
+// stored, never truncated; omitted when empty or "none"), Customer, Phone,
+// Address (suburb appended unless empty or already inside the address), then
+// Details — the ONLY field cut, so the body stays at or under SMS_MAX_LEN.
+// gsm() runs per field, so control chars and newlines collapse inside values;
+// the lines themselves join with "\n". Ends with "Do not reply."
 export function buildAcceptSms(job: AcceptSmsJob): string {
-  const TAIL = " Do not reply.";
-  const parts: string[] = [
-    `${gsm(job.job_id)} ${gsm(job.urgency)} ${gsm(job.trade)} job, ${gsm(job.suburb)}.`,
-  ];
-  if (typeof job.customer_name === "string" && job.customer_name !== "") {
-    parts.push(`Customer ${gsm(job.customer_name).slice(0, 60)}.`);
+  const TAIL = "Do not reply.";
+  const urgencyTrade = capFirst(
+    [gsm(job.urgency), gsm(job.trade)].filter((s) => s !== "").join(" "),
+  );
+  const lines: string[] = [`${BUSINESS_NAME} - Job ${gsm(job.job_id)}`, urgencyTrade];
+  const hazards = gsm(job.hazards ?? "");
+  if (hazards !== "" && hazards.toLowerCase() !== "none") lines.push("HAZARD: " + hazards);
+  const name = gsm(job.customer_name ?? "");
+  if (name !== "") lines.push("Customer: " + name);
+  const phone = gsm(job.contact_phone ?? "");
+  if (phone !== "") lines.push("Phone: " + localDigits(phone));
+  const address = gsm(job.address ?? "");
+  if (address !== "") {
+    const suburb = gsm(job.suburb);
+    const dup = suburb !== "" && address.toLowerCase().includes(suburb.toLowerCase());
+    lines.push("Address: " + (suburb === "" || dup ? address : `${address}, ${suburb}`));
   }
-  if (typeof job.contact_phone === "string" && job.contact_phone !== "") {
-    parts.push(`Callback ${localDigits(job.contact_phone)}.`);
+  const head = lines.join("\n");
+  const details = gsm(job.details ?? "");
+  if (details !== "") {
+    const room = SMS_MAX_LEN - head.length - TAIL.length - 2; // 2 joining "\n"
+    if (room > 0) {
+      const piece = `Details: ${details}`.slice(0, room).trimEnd();
+      if (piece !== "") return head + "\n" + piece + "\n" + TAIL;
+    }
   }
-  if (typeof job.address === "string" && job.address !== "") {
-    parts.push(`Address ${gsm(job.address).slice(0, 120)}.`);
-  }
-  const extras: string[] = [];
-  if (typeof job.details === "string" && job.details !== "") {
-    extras.push(`Details: ${gsm(job.details)}`);
-  }
-  if (typeof job.hazards === "string" && job.hazards !== "") {
-    extras.push(`Hazards: ${gsm(job.hazards)}`);
-  }
-  let body = parts.join(" ");
-  for (const extra of extras) {
-    if (extra === "") continue;
-    const room = SMS_MAX_LEN - (body + TAIL).length - 1; // 1 joining space
-    if (room <= 0) break;
-    const piece = extra.length > room ? extra.slice(0, room).trimEnd() : extra;
-    if (piece === "") break;
-    body += " " + piece;
-  }
-  return body + TAIL;
+  return head + "\n" + TAIL;
 }
 
 // ---------------------------------------------------------------------------

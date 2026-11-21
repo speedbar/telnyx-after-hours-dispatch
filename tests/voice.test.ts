@@ -451,7 +451,7 @@ test("11. unknown event type: 200, voice_event_ignored with the type, no runner"
   }
 });
 
-test("12. call.speak.ended hangs up the leg only when ring.status is accepted", async () => {
+test("12. call.speak.ended hangs up the leg only after a confirmation (accept or decline)", async () => {
   const cap = captureLog();
   try {
     const accepted = makeWorld(ringingState("accepted"));
@@ -460,6 +460,13 @@ test("12. call.speak.ended hangs up the leg only when ring.status is accepted", 
     await resA.body?.cancel();
     assert.deepEqual(accepted.hangups, [CC1]);
     assert.equal(accepted.ringEvents.length, 0, "speak.ended is not a reducer event");
+
+    // D20b-2: a declined leg, stamped in confirm_ccid, hangs up the same way.
+    const declined = makeWorld({ ...ringingState("dialing"), confirm_ccid: CC1 });
+    const resD = await post(declined, makeBody("call.speak.ended", {}, "evt-s3"));
+    assert.equal(resD.status, 200);
+    await resD.body?.cancel();
+    assert.deepEqual(declined.hangups, [CC1]);
 
     const prompting = makeWorld(ringingState("prompting"));
     const resB = await post(prompting, makeBody("call.speak.ended", {}, "evt-s2"));

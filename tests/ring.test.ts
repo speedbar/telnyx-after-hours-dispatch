@@ -121,8 +121,10 @@ test("escalate: status reserving, only a reserve effect, no attempt increment", 
   assert.equal(s1.attempt, 1, "attempt not incremented before reserve_result");
   assert.deepEqual(s1.tried, ["t1"]);
   assert.equal(s1.current?.technician_id, "t2");
-  assert.deepEqual(types(eff1), ["log", "log", "release", "hangup_call", "log", "reserve"]);
+  assert.deepEqual(types(eff1), ["log", "log", "release", "confirm_hangup", "log", "reserve"]);
   assert.deepEqual(eff1[2], { type: "release", technician_id: "t1" });
+  assert.deepEqual(eff1[3], { type: "confirm_hangup", decline: true });
+  assert.equal(s1.confirm_ccid, "cc1", "declined leg stamped for the speak.ended hangup");
   assert.deepEqual(eff1[5], { type: "reserve", technician_id: "t2" });
   assert.ok(logEvents(eff1).includes("ring_escalate"));
 });
@@ -201,7 +203,7 @@ test("no_input (gather timeout) escalates; exhausts at attempt 2", () => {
   assert.ok(logEvents(eff4).includes("ring_exhausted"));
 });
 
-test("hangup_call is emitted only for declined and no_input", () => {
+test("declined gets a confirm_hangup; hangup_call is emitted only for no_input", () => {
   const cases: Array<[RingOutcome, () => RingState, RingEvent]> = [
     ["declined", () => startPrompting()[0], { type: "gather", call_control_id: "cc1", digits: "2", event_id: "g1", now: 1010 }],
     ["no_input", () => startPrompting()[0], { type: "gather", call_control_id: "cc1", digits: "", event_id: "g2", now: 1010 }],
@@ -212,8 +214,14 @@ test("hangup_call is emitted only for declined and no_input", () => {
   for (const [outcome, setup, ev] of cases) {
     const [s, eff] = reduceRing(setup(), ev);
     assert.equal(s.outcome_log[0].outcome, outcome, outcome);
-    const expectHangup = outcome === "declined" || outcome === "no_input";
+    const expectHangup = outcome === "no_input";
     assert.equal(types(eff).includes("hangup_call"), expectHangup, `hangup_call for ${outcome}`);
+    const expectConfirm = outcome === "declined";
+    assert.equal(
+      eff.some((e) => e.type === "confirm_hangup" && e.decline === true),
+      expectConfirm,
+      `decline confirmation for ${outcome}`,
+    );
   }
 });
 

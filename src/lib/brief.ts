@@ -2,14 +2,15 @@
 // Technician brief for the ring (D20): a pure template, no LLM. Job fields are
 // data, never instructions: control characters stripped, length-capped. Plain
 // text only (no SSML / tags), so nothing here can steer the speech model.
-// D20b-1: the spoken brief names only the urgency, trade, suburb, address and
-// reference — never the customer name or phone number; those go by SMS after
-// the technician accepts.
-
-import { spoken } from "./validate";
+// D20b-2: the spoken brief names only the urgency, trade, suburb and address
+// — never the reference, the customer name or any phone number; those go by
+// SMS after the technician accepts (the brief never mentions the SMS).
 
 export const BRIEF_MAX_LEN = 1000;
 export const SUMMARY_MAX_LEN = 200;
+
+// The dispatch business name, shared with /dv so it is written once.
+export const BUSINESS_NAME = "Harbour Trades After-Hours";
 
 export interface BriefJob {
   job_id: string;
@@ -43,13 +44,22 @@ export function spokenCallback(digits: string): string {
   return local.split("").join(" ");
 }
 
+// Fixed closing is appended after every variable field, which is capped at the
+// source, so it always fits inside BRIEF_MAX_LEN untruncated. Missing fields
+// drop their fragment cleanly (no "undefined", no double commas).
+// D20b-3: the stored urgency is spoken as-is, first letter capitalised (no
+// mapping); an empty one is omitted.
 export function buildBrief(job: BriefJob): string {
-  const parts: string[] = [];
-  parts.push(`${field(job.urgency)} ${field(job.trade)} job in ${field(job.suburb)}.`);
-  if (job.address !== undefined) parts.push(`Address ${field(job.address)}.`);
-  parts.push(`Reference ${spoken(job.job_id)}.`);
-  parts.push(
-    "Press 1 to accept, 2 to decline. The customer details will be texted to you after you accept.",
-  );
-  return parts.join(" ");
+  const urgency = field(job.urgency);
+  const head = urgency === "" ? "" : urgency.charAt(0).toUpperCase() + urgency.slice(1);
+  const trade = field(job.trade);
+  const suburb = field(job.suburb);
+  const address = job.address === undefined ? "" : field(job.address);
+  const jobPart = trade === "" ? "job" : `${trade} job`;
+  let tail = "";
+  if (suburb !== "" && address !== "") tail = ` in ${suburb}, ${address}`;
+  else if (suburb !== "") tail = ` in ${suburb}`;
+  else if (address !== "") tail = ` ${address}`;
+  const body = head === "" ? jobPart.charAt(0).toUpperCase() + jobPart.slice(1) : `${head} ${jobPart}`;
+  return `Hi, ${BUSINESS_NAME} dispatch. ${body}${tail}. Press 1 to accept, or 2 to decline.`;
 }

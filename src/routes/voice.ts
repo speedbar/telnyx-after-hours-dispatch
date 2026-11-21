@@ -104,7 +104,8 @@ export function buildRingDeps(env: VoiceEnv, c: string): RunRingDeps {
     client: makeTelnyxClient(env),
     dialer: withDialGate(readConfig(env, "ALLOWED_DIAL_PREFIXES"), makeDialer(env)),
     phones: loadTechPhones(readConfig(env, "TECH_PHONES_JSON")),
-    voice: readConfig(env, "RING_TTS_VOICE") ?? "Telnyx.KokoroTTS.af",
+    // D20b-2: optional TTS voice id; unset/empty = no voice key in the body.
+    voice: readConfig(env, "RING_VOICE"),
     language: readConfig(env, "RING_TTS_LANGUAGE") ?? "en-US",
     holdTtlS: intSetting(readConfig(env, "RING_HOLD_TTL_S"), 60, 1, 600),
     busyS: intSetting(readConfig(env, "DISPATCH_BUSY_S"), 1800, 1, 86400),
@@ -275,11 +276,12 @@ export async function handleVoiceEvents(
 
       case "call.speak.ended": {
         logVoiceEvent(request_id, state, eventType, payload);
-        // The acceptance confirmation finished: hang the leg up once, only
-        // when the ring ended accepted. Every other speak.ended is ignored.
+        // A confirmation finished (accept: status accepted; decline: the leg
+        // stamped in confirm_ccid — D20b-2): hang that leg up once. Every
+        // other speak.ended is ignored.
         if (ccid !== undefined) {
           const job = await deps.jobs.get();
-          if (job?.ring?.status === "accepted") {
+          if (job?.ring?.status === "accepted" || job?.ring?.confirm_ccid === ccid) {
             const r = await deps.client.hangup(ccid);
             if (!r.ok) {
               log({

@@ -41,9 +41,11 @@ export interface DialOptions {
   command_id?: string;
 }
 
+// D20b-2: voice is optional (env RING_VOICE, non-empty only). When it is
+// absent the body carries no voice key at all and Telnyx picks the default.
 export interface GatherOptions {
   payload: string;
-  voice: string;
+  voice?: string;
   language: string;
   timeout_millis?: number; // default 8000
   client_state?: string;
@@ -52,7 +54,7 @@ export interface GatherOptions {
 
 export interface SpeakOptions {
   payload: string;
-  voice: string;
+  voice?: string;
   language: string;
   client_state?: string;
   command_id?: string;
@@ -167,7 +169,7 @@ export function makeTelnyxClient(env: unknown, fetchImpl: FetchLike = fetch): Te
       if (key === undefined) return noKey();
       const body: Record<string, unknown> = {
         payload: opts.payload,
-        voice: opts.voice,
+        ...(opts.voice !== undefined ? { voice: opts.voice } : {}),
         language: opts.language,
         minimum_digits: 1,
         maximum_digits: 1,
@@ -183,7 +185,11 @@ export function makeTelnyxClient(env: unknown, fetchImpl: FetchLike = fetch): Te
 
     async speak(callControlId, opts) {
       if (key === undefined) return noKey();
-      const body: Record<string, unknown> = { payload: opts.payload, voice: opts.voice, language: opts.language };
+      const body: Record<string, unknown> = {
+        payload: opts.payload,
+        ...(opts.voice !== undefined ? { voice: opts.voice } : {}),
+        language: opts.language,
+      };
       if (opts.client_state !== undefined) body.client_state = opts.client_state;
       if (opts.command_id !== undefined) body.command_id = opts.command_id;
       const r = await callApi(key, fetchImpl, "/calls/" + callControlId + "/actions/speak", body);
