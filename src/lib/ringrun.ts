@@ -41,6 +41,8 @@ export interface RingJobs {
 
 // TechnicianActor stub shape (real methods are structurally assignable).
 export interface RingTech {
+  // D20-5a: optional; startRing's cooldown filter reads last_ring_at off it.
+  status?(): Promise<unknown>;
   reserve(args: {
     call_ref: string;
     job_id: string;

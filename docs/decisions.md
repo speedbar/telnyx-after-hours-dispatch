@@ -84,3 +84,10 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 - Conservative-gas rule: any whole-word "gas" mention corrects the trade to `gas` and forces `emergency`, so a gas hot water complaint is routed to a gas-licensed technician and treated as an emergency. A false emergency beats a missed one on an after-hours call.
 - Known limitation: suburb or area matching is NOT built — eligibility is by licensed trade only; a technician may be reserved for a job far away.
 - Why not prompt wording: prompts are advice to the model; code is a wall. Anything with consequences (reservation, retries, safety) stays deterministic.
+
+## D20 Technician ring: fail-safe modes, pure reducer, event-driven (added 21 Nov 2026)
+- Why: after create_job, nothing told a human about the job; one technician was reserved for four jobs in 25 minutes because markBooked only silenced the hold expiry.
+- Choice: a deterministic ring, no LLM. The machine is a pure reducer (state, event) -> (state, effects) with all I/O behind injected deps, so webhook retries and out-of-order events can never cause a second dial. `ring_mode` fails SAFE (missing key or any other value = dry_run, unlike dispatch_enabled which fails open) because a ring costs money and wakes a person. Hard caps in code: 2 attempts per job, a daily DirectoryActor counter, a per-technician cooldown, one ring per job. Only an explicit accept can mark `dispatched`.
+- State: ring state lives in the per-call JobActor (instance name = call_ref); the actor's single alarm is multiplexed between the 7-day retention delete and the ring start (option A, spike D20-0 proved actors can fetch). Technician availability (hold, dispatched, cooldown) stays in the TechnicianActor.
+- Admin: `/admin/ring-test` rings a named technician with a fake `sim-` job; the mode override there can never be "off", defaults to dry_run, and goes live only when the body says so.
+- Revisit if: the 2-attempt cap or the cooldown proves too tight in the live checks (spec section 3).

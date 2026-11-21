@@ -22,6 +22,8 @@ interface TechState {
     job_id: string;
     until: number;
   };
+  // D20-5a: when a ring attempt last extended the hold (startRing cooldown).
+  last_ring_at?: number;
   updated_at: number;
 }
 
@@ -220,8 +222,10 @@ export class TechnicianActor extends StatefulActor {
     ) {
       return { extended: false };
     }
-    state.held_for.expires_at = Date.now() + ttl * 1000;
-    state.updated_at = Date.now();
+    const nowMs = Date.now();
+    state.held_for.expires_at = nowMs + ttl * 1000;
+    state.last_ring_at = nowMs;
+    state.updated_at = nowMs;
     await this.ctx.storage.put("state", state);
     await this._rearm(state);
     return { extended: true };
