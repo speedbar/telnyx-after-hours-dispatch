@@ -1,68 +1,80 @@
-# dispatch: after-hours urgent-call assistant (Telnyx FDE ANZ take-home)
+# dispatch: after-hours urgent-call assistant
 
-A voice assistant for a trade business (plumbing, electrical, gas). It answers after hours, works out whether the call is an emergency, collects the details, reserves an on-call technician and records a job. It runs on Telnyx: an AI Assistant with a Conversation Workflow, a custom MCP server and a dynamic-variables webhook on Edge Compute, with Stateful Actors and KV for state.
+A voice assistant for a trade business (plumbing, electrical, gas). After hours it answers the phone, decides whether the call is an emergency, collects the details, reserves an on-call technician, rings them, and texts the details. If nobody accepts, the manager gets a text. Built on Telnyx for the Forward Deployed Engineer (ANZ) take-home.
 
-## Honest status (19 Nov 2026)
+## Try it
 
-| Area | State |
-|---|---|
-| Edge function `dispatch` (TypeScript), live | Built and verified |
-| `/dv` dynamic-variables webhook, Ed25519 signature check | Built and verified live (about 570 to 665 ms) |
-| `/mcp` server with 4 tools, bearer auth | Built and verified live (V-015) |
-| DirectoryActor, TechnicianActor (atomic hold with expiry), JobActor | Built and verified live (V-011, V-014) |
-| KV (`DISPATCH_KV`) | Used for the seeded durable copy only; slow (1.5 to 1.9 s per op), kept off the voice path |
-| Conversation Workflow, 7 nodes, speak node `Close` | Built in the Portal; three conversation tests run |
-| S1.5 tool hardening (server identifies call and job, fail-closed fallback) | Written by OpenCode, in the working tree, **not yet reviewed, merged or shipped** |
-| Dialable phone number | **Not done** (account balance and verification) |
-| Warm transfer to a technician | **Not built** |
-| Kill-switch and time-cap edges, golden set, CI | Planned |
+- Phone number: in the submission email.
+- Health check: `https://dispatch-b823b5bf-9.telnyxcompute.com/health` (booleans only, no secrets).
+- Say "my kitchen tap burst" for the urgent path. Ask for "a person" for the human transfer. Say "there is a gas smell" to hear the safety line.
 
-Everything the caller hears about a technician is mocked. No technician is phoned in this build. See `docs/test-matrix.md` for what was actually run.
+## How it works
 
-## Why this design
+```mermaid
+flowchart LR
+  C[Caller] --> A["Telnyx AI Assistant<br/>Conversation Workflow"]
+  A -->|call start| DV["/dv<br/>dynamic variables"]
+  A -->|tool calls| MCP["/mcp<br/>MCP server"]
+  A -->|ask for a human| T["Transfer tool<br/>(human accepts by voice)"]
+  MCP --> TA["TechnicianActor<br/>atomic hold"]
+  MCP --> JA["JobActor<br/>one per call"]
+  JA -->|ring| R["Call Control<br/>DTMF 1 accept / 2 decline"]
+  R --> SMS["SMS: details to tech,<br/>alert to manager if nobody accepts"]
+  DV --> DA["DirectoryActor<br/>customers + flags"]
+  subgraph Edge["Telnyx Edge function: dispatch"]
+    DV
+    MCP
+    TA
+    JA
+    DA
+    R
+    SMS
+  end
+```
 
-Workflow first. The path of a call is fixed (triage, details, reserve, job, close, hang up). The model is used only inside a node to talk and to pull structured details from speech. Reserving a technician, retries and the fallback are deterministic code behind MCP tools, so a model mistake cannot double-book a technician or skip the fallback. See `docs/architecture.md`, `docs/decisions.md` and `docs/use-case.md`.
+- **Workflow first.** The call path is fixed: Triage, Details, Reserve, Job, Close, Hang Up, with a Fallback. The model only talks and extracts details inside a node.
+- **Code decides.** Reserving a technician, the ring, retries (2 attempts), the manager alert and the safety caps are deterministic code behind MCP tools, so a model mistake cannot double-book or skip escalation.
+- **Safety switches.** Ring and SMS each have a mode (`off`, `dry_run`, `live`) held in DirectoryActor. Only `+61` numbers can be dialled, with per-technician cooldown and daily caps.
+- **Human escalation.** Emergencies are told to call triple zero. If the caller asks for a person, the assistant uses Telnyx's transfer tool and the human accepts by voice; if nobody does, the assistant carries on logging the job.
+- **State.** Stateful Actors for hot state (TechnicianActor, JobActor, DirectoryActor). KV holds the seeded durable copy only.
 
-## Architecture
+MCP tools used by the workflow: `reserve_technician`, `create_job`, `release_technician`. `lookup_customer` is registered but not used by the workflow.
 
-![architecture](docs/architecture.svg)
+More: `docs/architecture.md`, `docs/decisions.md`, `docs/use-case.md`, `docs/portal/` (the exact Portal configuration).
 
-Routes on `https://dispatch-b823b5bf-9.telnyxcompute.com`: `/health`, `/dv`, `/mcp`, `/admin/seed`, `/admin/tech`.
-
-## MCP tools
-
-| Tool | Purpose |
-|---|---|
-| `lookup_customer` | Find the caller by phone number in the directory |
-| `reserve_technician` | Atomically hold an on-call technician (requires name, address, callback number) |
-| `create_job` | Write the job record for this call |
-| `release_technician` | Release a hold (declined, no answer, caller hung up, error) |
-
-On failure every tool returns `next: "fallback"`, `retry: false` and the missing fields, so the workflow goes to the Fallback node and does not loop.
-
-## Run and verify
+## Run and test
 
 ```
-npm install
+npm ci
 npm run typecheck
-npm test
-telnyx-edge secrets add <NAME>   # see .env.example for the names, never commit values
+env -u MCP_TOKEN -u TELNYX_API_KEY -u ADMIN_TOKEN npm test
+telnyx-edge secrets add <NAME>      # names are in .env.example; never commit values
 telnyx-edge ship
-curl https://dispatch-b823b5bf-9.telnyxcompute.com/health
 ```
 
-Secrets are set with the Edge CLI and never stored in the repo. `/health` reports booleans only.
+The `env -u` prefix stops real tokens in your shell from changing the auth tests.
+
+## Observability
+
+Logs are one JSON object per line on stdout, written only by `src/lib/log.ts`. Fields include `component`, `event`, `level`, `request_id` and `call_ref`. Phone numbers are never logged, only a salted hash.
+
+```
+telnyx-edge logs dispatch --since 30m --last 250
+telnyx-edge logs dispatch --type invocations --since 30m
+telnyx-edge actors logs TechnicianActor --since 60m
+telnyx-edge metrics dispatch
+```
+
+Beyond logs: per-hop latency timers on each tool call, and `GET /admin/job-state` (admin token) shows a call's ring and SMS status. The transfer outcome is visible in Portal conversation history, not in function logs.
 
 ## How this was built
 
-- All repo code was written with Telnyx Inference as the coding model (Kimi-K3) through OpenCode (`@telnyx/opencode`), from task specs in `docs/tasks/`.
-- Planning, specs, review notes and these documents were drafted with Claude and reviewed and owned by the candidate.
-- Findings about the platform and tools are in `docs/dogfooding.md`, `docs/bug-journal.md` and `docs/verify-log.md`.
+All repo code was written with Telnyx Inference (Kimi-K3) through OpenCode (`@telnyx/opencode`), one task file per slice in `docs/tasks/`, with `AGENTS.md` as the standing rules. Planning, specs and review notes were drafted with Claude and owned by the author. Findings about the platform and tools: `docs/dogfooding.md`, `docs/bug-journal.md`, `docs/verify-log.md`.
 
-## Limitations and known risks
+## Limits
 
-- Technician contact, customer data and the on-call roster are mock data.
-- Safety wording (water near electrics, gas smell) is scripted and must be reviewed by a licensed tradesperson before any real use.
-- The Job node currently says a technician "has been asked to contact" the caller. That is not true until a real dispatch exists; the mock disclosure covers it, and the wording should change before any live use.
-- The `_meta` field names Telnyx sends on tool calls are unverified (V-016). The server falls back to a safe generated reference.
-- Telnyx account balance went negative and disabled inference on 18 Nov; this blocked further OpenCode work (see `docs/dogfooding.md`).
+- Technicians, customers and the roster are mock data.
+- Safety wording (gas, water near electrics) is scripted and needs review by a licensed tradesperson before any real use.
+- Only the Australian `+61` prefix is allowed for outbound rings and texts.
+- No published inbound concurrency limit was found for assistants; outbound calls default to a low concurrent limit on a new account.
+- The ring voice is a different TTS voice from the assistant's.
