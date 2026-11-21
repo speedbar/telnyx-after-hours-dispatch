@@ -188,7 +188,9 @@ async function handleToolCall(
     !Array.isArray(params._meta)
       ? (params._meta as Record<string, unknown>)
       : undefined;
-  const ctx: ToolCtx = { origin };
+  // D20-5g: env goes on the ctx (like origin) so create_job's inline ring
+  // start runs with the route's secrets, not a rebuilt object.
+  const ctx: ToolCtx = { origin, env };
   if (meta !== undefined) {
     const telnyxId = meta.telnyx_conversation_id;
     const altId = meta.conversation_id;

@@ -270,6 +270,32 @@ export class JobActor extends StatefulActor {
     return true;
   }
 
+  // D20-5g: stamp the outcome of create_job's inline ring start. A start
+  // (started=true, any reason) cancels the alarm backstop — ring_at and the
+  // now-unusable token go — so a later alarm can never dial twice. A start
+  // that never ran keeps the alarm path for the caller to schedule, and the
+  // D20-5d safety net applies: not-ok and not-mode_off flips an unset
+  // dispatch_state to unassigned (capped/no_job/no_candidates arrive via
+  // runRing's own job_state effects instead).
+  async ringStarted(
+    reason: RingStartReason,
+    started: boolean,
+  ): Promise<{ ok: boolean }> {
+    const rec = await this.ctx.storage.get<JobRecord>("job");
+    if (!rec) return { ok: false };
+    rec.ring_start_reason = reason;
+    if (started) {
+      delete rec.ring_at;
+      delete rec.ring_token;
+    } else if (reason !== "mode_off" && rec.dispatch_state === undefined) {
+      rec.dispatch_state = "unassigned";
+    }
+    rec.updated_at = Date.now();
+    await this.ctx.storage.put("job", rec);
+    await this._rearm(rec);
+    return { ok: true };
+  }
+
   // D20: one read-modify-write around the pure reducer — the new ring state
   // and any job_state effect landing on dispatch_state are stored together,
   // so a crash between them cannot split the two. Effects return as data for

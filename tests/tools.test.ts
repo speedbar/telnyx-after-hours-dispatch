@@ -283,9 +283,10 @@ test("create_job: happy path without job_id, replay, invented job_id ignored", a
 
 // D20-5b: a successful create_job schedules the alarm-driven ring start
 // (ring_at about RING_START_DELAY_MS out); a setRingAt failure is logged and
-// never changes the result.
+// never changes the result. D20-5g: this is the RING_INLINE=0 path.
 test("create_job schedules ring_at; setRingAt failure keeps the result identical", async () => {
   const env = await seeded();
+  env.RING_INLINE = "0";
   const reserve = handler("reserve_technician");
   const create = handler("create_job");
   const r1 = (await reserve(validReserve("call-080"), env)) as ToolResult;
@@ -327,9 +328,11 @@ test("create_job schedules ring_at; setRingAt failure keeps the result identical
 
 // D20-5e: the fresh-success path also stores the single-use ring callback —
 // a random 32-hex token and origin + "/ring-start" — on the job. Both must
-// stay off the tool result and every log line.
+// stay off the tool result and every log line. D20-5g: this is the
+// RING_INLINE=0 path (an inline start consumes the token instead).
 test("create_job stores the ring token and callback; they never reach the model or the logs", async () => {
   const env = await seeded();
+  env.RING_INLINE = "0";
   const reserve = handler("reserve_technician");
   const create = handler("create_job");
   const r1 = (await reserve(validReserve("call-090"), env)) as ToolResult;

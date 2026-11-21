@@ -13,6 +13,34 @@ import {
   spoken,
 } from "../lib/validate";
 import type { ToolCtx, ToolEnv, ToolResult } from "./index";
+import {
+  startRing,
+  type RingStartReason,
+  type StartRingEnv,
+  type StartRingResult,
+} from "../lib/ringstart";
+
+// D20-5g: hard cap on the inline ring start; a hung start never delays the
+// caller's answer (the losing promise is caught, so it settles harmlessly).
+const INLINE_RING_TIMEOUT_MS = 3000;
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), ms);
+  });
+  try {
+    return await Promise.race([p, cap]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// RING_INLINE (D20-5g): unset or "1" starts the ring inline from create_job
+// (the default); "0" keeps the old alarm-only path.
+function ringInline(env: ToolEnv): boolean {
+  return readConfig(env, "RING_INLINE") !== "0";
+}
 
 // S1.9 (BUG-005): per-hop latency, same pattern as reserve_technician.
 // Time one awaited hop and write the resulting field(s) to the log context
@@ -181,24 +209,65 @@ export async function handleCreateJob(
       }
     }
   }
-  // D20-5e: the job is open — schedule the alarm-driven ring start and store
-  // the single-use callback the alarm will POST (the alarm keeps the timing;
-  // the function, which has the ring secrets, runs the dial). The callback
-  // URL is this function's origin + /ring-start; without an origin (direct
-  // handler call) the token alone is stored and the alarm's POST cannot run,
-  // surfacing as callback_error on the job. A failure here is logged (error
-  // name only) and NEVER changes the create_job result or failure shape.
+  // D20-5g: the job is open — start the ring. The default (RING_INLINE unset
+  // or "1") runs startRing inline in the function, which has the ring secrets,
+  // under a hard 3 s cap; the outcome is stamped on the job via ringStarted.
+  // A start cancels the pending alarm ring so a later alarm can never start a
+  // second ring. Only a transient miss (deps_error / run_error / timeout)
+  // reschedules the D20-5e alarm + single-use callback as a fallback;
+  // mode_off needs nothing and capped/no_job/no_candidates already ended the
+  // machine through runRing. "0" is the old alarm-only path (D20-5e). A
+  // failure here is logged (error name only) and NEVER changes the create_job
+  // result or failure shape.
   const ringStart = Date.now();
   try {
-    const origin = ctx?.origin;
-    const cb =
-      typeof origin === "string" && origin !== ""
-        ? origin + "/ring-start"
-        : undefined;
-    await jobsStub.setRingAt(Date.now() + ringStartDelayMs(env), {
-      token: newRingToken(),
-      ...(cb === undefined ? {} : { cb }),
-    });
+    if (ringInline(env)) {
+      const ringEnv = (ctx?.env ?? env) as unknown as StartRingEnv;
+      const startFn = ctx?.startRingFn ?? startRing;
+      const opts = ctx?.ringDepsFor === undefined ? {} : { depsFor: ctx.ringDepsFor };
+      const capMs =
+        typeof ctx?.ringTimeoutMs === "number" && ctx.ringTimeoutMs > 0
+          ? ctx.ringTimeoutMs
+          : INLINE_RING_TIMEOUT_MS;
+      const outcome = await withTimeout(
+        startFn(ringEnv, call_ref, opts).catch(
+          (): StartRingResult => ({
+            mode: "dry_run",
+            started: false,
+            reason: "run_error",
+          }),
+        ),
+        capMs,
+      );
+      const started = outcome !== "timeout" && outcome.started;
+      const reason: RingStartReason =
+        outcome === "timeout" ? "run_error" : outcome.reason;
+      await jobsStub.ringStarted?.(reason, started);
+      if (!started && (reason === "deps_error" || reason === "run_error")) {
+        const origin = ctx?.origin;
+        const cb =
+          typeof origin === "string" && origin !== ""
+            ? origin + "/ring-start"
+            : undefined;
+        await jobsStub.setRingAt(Date.now() + ringStartDelayMs(env), {
+          token: newRingToken(),
+          ...(cb === undefined ? {} : { cb }),
+        });
+      }
+    } else {
+      // D20-5e alarm-only path (RING_INLINE=0): the alarm keeps the timing
+      // and POSTs the stored single-use callback so the function runs the
+      // dial. RING_START_DELAY_MS applies to this path only.
+      const origin = ctx?.origin;
+      const cb =
+        typeof origin === "string" && origin !== ""
+          ? origin + "/ring-start"
+          : undefined;
+      await jobsStub.setRingAt(Date.now() + ringStartDelayMs(env), {
+        token: newRingToken(),
+        ...(cb === undefined ? {} : { cb }),
+      });
+    }
   } catch (err) {
     log({
       component: "mcp",
