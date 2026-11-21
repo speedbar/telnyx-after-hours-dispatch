@@ -41,6 +41,7 @@ const EXPECTED_KEYS = [
   "hop_brief_ms",
   "hop_mark_booked_ms",
   "hop_job_write_ms",
+  "hop_ring_ms",
   "flag_source",
   "boot_age_ms",
   "first_request",
@@ -50,7 +51,7 @@ const EXPECTED_KEYS = [
   "digits",
 ];
 
-test("formatLine output parses as JSON with exactly the 39 keys in order", () => {
+test("formatLine output parses as JSON with exactly the 40 keys in order", () => {
   const line = formatLine(
     {
       component: "mcp",
@@ -84,6 +85,7 @@ test("formatLine output parses as JSON with exactly the 39 keys in order", () =>
       hop_brief_ms: 11,
       hop_mark_booked_ms: 2,
       hop_job_write_ms: 11,
+      hop_ring_ms: 1,
       flag_source: "cache",
       boot_age_ms: 12345,
       first_request: false,

@@ -13,6 +13,8 @@ import {
   type RingEvent,
   type RingState,
 } from "../lib/ring.js";
+import { startRing, type StartRingEnv } from "../lib/ringstart";
+import { buildRingDeps, type RingDepsFactory } from "../routes/voice";
 
 type JobState = "reserved" | "briefed" | "released";
 // D20: where the technician ring stands; JobState stays untouched (spec 1.1).
@@ -258,7 +260,8 @@ export class JobActor extends StatefulActor {
   }
 
   // Multiplexed alarm (D20): a due retention deletes the job record; a due
-  // ring_at is consumed (the dial itself is wired in D20-5) and never deletes.
+  // ring_at is consumed FIRST (so a redelivered alarm cannot start a second
+  // ring), then startRing runs from inside the actor and never deletes.
   // At-least-once delivery: every path is idempotent; a repeat is a no-op.
   async alarm(): Promise<void> {
     const rec = await this.ctx.storage.get<JobRecord>("job");
@@ -275,6 +278,30 @@ export class JobActor extends StatefulActor {
       rec.updated_at = now;
       await this.ctx.storage.put("job", rec);
       log({ component: "actor", event: "ring_alarm_due", outcome: "ok", call_ref: this._callRef(), job_id: rec.job_id });
+      // D20-5b: run the start from inside the actor (spec 1.2 option A). The
+      // deps keep buildRingDeps but pin jobs to THIS actor's own methods —
+      // calling its own stub would deadlock (no re-entrancy per actor id).
+      // A failure is logged and must never throw out of the alarm.
+      try {
+        const depsFor: RingDepsFactory = (env, callActor) => ({
+          ...buildRingDeps(env, callActor),
+          jobs: {
+            ringEvent: (e) => this.ringEvent(e),
+            get: () => this.get(),
+          },
+        });
+        await startRing(this.env as unknown as StartRingEnv, this._callRef(), { depsFor });
+      } catch (err) {
+        log({
+          component: "actor",
+          event: "ring_alarm_fail",
+          level: "error",
+          outcome: "fail",
+          call_ref: this._callRef(),
+          job_id: rec.job_id,
+          error: err instanceof Error ? err.name : "unknown",
+        });
+      }
     }
     await this._rearm(rec);
   }

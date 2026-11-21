@@ -9,7 +9,7 @@ import { JobActor } from "../src/actors/JobActor.js";
 // deleteAlarm/delete) like the real Stateful Actor storage.
 type CtorArgs = ConstructorParameters<typeof JobActor>;
 
-function makeActor() {
+function makeActor(env: Record<string, unknown> = {}) {
   const map = new Map<string, unknown>();
   let alarmAt: number | null = null;
   let deleteCount = 0;
@@ -42,9 +42,43 @@ function makeActor() {
   };
   const actor = new JobActor(
     { storage } as unknown as CtorArgs[0],
-    {} as unknown as CtorArgs[1],
+    env as unknown as CtorArgs[1],
   );
   return { actor, map, alarm: () => alarmAt, deleteCount: () => deleteCount };
+}
+
+// D20-5b: a DirectoryActor-shaped fake with a counting daily cap; flag is
+// what flag("ring_mode") returns (null = unset -> dry_run, fail safe).
+function dirEnv(flag: string | null, extra: Record<string, unknown> = {}) {
+  const bumps: string[] = [];
+  const env = {
+    DIRECTORY: {
+      idFromName: () => ({
+        flag: async () => flag,
+        bumpCounter: async () => {
+          bumps.push("ring");
+          return { ok: true, count: 1 };
+        },
+      }),
+    },
+    ...extra,
+  };
+  return { env, bumps };
+}
+
+// Capture log lines for the duration of fn, then restore the file-wide mute.
+async function captureLogs(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const prior = console.log;
+  console.log = (m: unknown) => {
+    lines.push(String(m));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = prior;
+  }
+  return lines;
 }
 
 // Mute the structured logger (console.log) for the whole file.
@@ -282,4 +316,81 @@ test("ringEvent marks dispatch_state ringing through an escalation (reserving)",
   const r = await actor.ringEvent({ type: "gather", call_control_id: "cc1", digits: "2", event_id: "e2", now: 1003 });
   assert.equal(r.state?.status, "reserving");
   assert.equal((await actor.get())?.dispatch_state, "ringing");
+});
+
+// D20-5b: a due ring_at now runs startRing from the alarm. ring_at is
+// consumed first, so a redelivery starts nothing; unset flag = dry_run, which
+// logs and dials nothing.
+test("alarm with a due ring_at runs startRing once; redelivery is a no-op (dry_run)", async () => {
+  const { env, bumps } = dirEnv(null);
+  const { actor, deleteCount } = makeActor(env);
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() - 1);
+  const lines = await captureLogs(() => actor.alarm());
+  const rec = await actor.get();
+  assert.ok(rec !== null, "a ring alarm never deletes the job");
+  assert.equal(rec?.ring_at, undefined, "ring_at consumed");
+  assert.equal(rec?.ring?.status, "dry_run", "one dry-run start was fed");
+  assert.equal(deleteCount(), 0);
+  assert.ok(lines.some((l) => l.includes('"event":"ring_dry_run"')), "dry_run logged");
+  await actor.alarm(); // redelivery
+  assert.equal(bumps.length, 1, "one ring per job even on a redelivered alarm");
+});
+
+test("alarm with a due ring_at and ring_mode off logs off and starts nothing", async () => {
+  const { env, bumps } = dirEnv("off");
+  const { actor } = makeActor(env);
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() - 1);
+  const lines = await captureLogs(() => actor.alarm());
+  const rec = await actor.get();
+  assert.equal(rec?.ring, undefined, "off feeds no reducer event");
+  assert.equal(bumps.length, 0, "off never touches the cap");
+  assert.ok(
+    lines.some((l) => l.includes('"event":"ring_start"') && l.includes('"node":"off"')),
+    "off logged",
+  );
+});
+
+test("retention due still deletes first and runs no ring even with ring_at pending", async () => {
+  const { env, bumps } = dirEnv(null);
+  const { actor, map, deleteCount } = makeActor(env);
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() + 60_000);
+  map.set("job", { ...(map.get("job") as Record<string, unknown>), retention_at: Date.now() - 1 });
+  await actor.alarm();
+  assert.equal(await actor.get(), null);
+  assert.equal(deleteCount(), 1);
+  assert.equal(bumps.length, 0, "retention wins; startRing never runs");
+});
+
+test("an error inside startRing logs ring_alarm_fail and never throws out of the alarm", async () => {
+  const { env } = dirEnv("live", {
+    JOBS: {
+      idFromName: () => {
+        throw new TypeError("jobs boom"); // buildRingDeps blows up
+      },
+    },
+  });
+  const { actor } = makeActor(env);
+  await actor.open(openArgs);
+  await actor.setRingAt(Date.now() - 1);
+  const lines: string[] = [];
+  const prior = console.log;
+  console.log = (m: unknown) => {
+    const s = String(m);
+    if (s.includes("ring_start_fail")) throw new Error("log boom"); // startRing cannot even fail-log
+    lines.push(s);
+  };
+  try {
+    await actor.alarm(); // must not reject
+  } finally {
+    console.log = prior;
+  }
+  const rec = await actor.get();
+  assert.ok(rec !== null, "the job survives a failed start");
+  assert.equal(rec?.ring_at, undefined, "ring_at was consumed before the start");
+  const failed = lines.filter((l) => l.includes('"event":"ring_alarm_fail"'));
+  assert.equal(failed.length, 1, "ring_alarm_fail logged once");
+  assert.ok(failed[0].includes('"error":"Error"'), "error name only");
 });

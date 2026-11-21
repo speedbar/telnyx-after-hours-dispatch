@@ -281,9 +281,52 @@ test("create_job: happy path without job_id, replay, invented job_id ignored", a
   assert.deepEqual(invented, c1);
 });
 
-test("create_job after the hold expired -> hold_expired", async () => {
+// D20-5b: a successful create_job schedules the alarm-driven ring start
+// (ring_at about RING_START_DELAY_MS out); a setRingAt failure is logged and
+// never changes the result.
+test("create_job schedules ring_at; setRingAt failure keeps the result identical", async () => {
   const env = await seeded();
-  (env as Record<string, unknown>).DISPATCH_HOLD_TTL_S = "1";
+  const reserve = handler("reserve_technician");
+  const create = handler("create_job");
+  const r1 = (await reserve(validReserve("call-080"), env)) as ToolResult;
+  const job_id = r1.job_id as string;
+  const good = {
+    call_ref: "call-080",
+    customer_name: "Sam Rivera",
+    address: "12 Banksia Street",
+    details: "Burst pipe flooding the kitchen",
+  };
+  const want = { ok: true, job_id, reference_spoken: job_id.split("").join(" ") };
+  const c1 = await create(good, env);
+  assert.deepEqual(c1, want);
+  const rec1 = (await jobRecord(env, "call-080")) as unknown as { ring_at?: number };
+  const delay = (rec1?.ring_at ?? NaN) - Date.now();
+  assert.ok(delay <= 1000 && delay > -2000, `ring_at about 1s out, got ${String(delay)}`);
+
+  const r2 = (await reserve(validReserve("call-081"), env)) as ToolResult;
+  const job_id2 = r2.job_id as string;
+  const { ref } = await resolveCallRef({ call_ref: "call-081" }, {});
+  const stub = env.JOBS?.idFromName(ref as string) as unknown as {
+    setRingAt(ms: number): Promise<{ ok: boolean }>;
+  };
+  stub.setRingAt = () => Promise.reject(new RangeError("message-must-not-appear"));
+  const before = logLines.length;
+  const c2 = await create({ ...good, call_ref: "call-081" }, env);
+  assert.deepEqual(c2, {
+    ok: true,
+    job_id: job_id2,
+    reference_spoken: job_id2.split("").join(" "),
+  });
+  const failed = logLines
+    .slice(before)
+    .filter((l) => l.includes('"event":"ring_schedule_fail"'));
+  assert.equal(failed.length, 1, "ring_schedule_fail logged once");
+  assert.ok(failed[0].includes('"error":"RangeError"'), "error name only");
+  assert.ok(!failed[0].includes("message-must-not-appear"), "message never logged");
+});
+
+test("create_job after the hold expired -> hold_expired", async () => {
+  const env = await seeded();  (env as Record<string, unknown>).DISPATCH_HOLD_TTL_S = "1";
   await handler("reserve_technician")(validReserve("call-020"), env);
   await new Promise((r) => setTimeout(r, 1100));
   const r = await handler("create_job")(

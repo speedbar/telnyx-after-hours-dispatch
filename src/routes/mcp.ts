@@ -158,6 +158,7 @@ const HOP_KEYS = [
   "hop_brief_ms",
   "hop_mark_booked_ms",
   "hop_job_write_ms",
+  "hop_ring_ms",
 ] as const;
 
 // tools/call: dispatch to the registry handler and log one mcp_call line

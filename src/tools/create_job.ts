@@ -5,6 +5,7 @@
 // the hold check. Failures as data; no customer data in error strings.
 
 import { log, setToolLogCtx, toolLogCtxOf, type ToolLogCtx } from "../lib/log.js";
+import { readConfig } from "../lib/config";
 import {
   cleanText,
   normalisePhone,
@@ -27,6 +28,14 @@ async function timed2<T>(
   } finally {
     if (ctx !== undefined) setToolLogCtx(ctx, fields(Date.now() - start));
   }
+}
+
+// RING_START_DELAY_MS (D20-5b): how far ahead of create_job the multiplexed
+// JobActor alarm fires the ring start. Default 1000, integer 0 to 30000.
+function ringStartDelayMs(env: ToolEnv): number {
+  const raw = readConfig(env, "RING_START_DELAY_MS");
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 0 && n <= 30_000 ? n : 1000;
 }
 
 type FailReason = "invalid_input" | "no_active_reservation" | "hold_expired";
@@ -163,6 +172,29 @@ export async function handleCreateJob(
       if (ctx !== undefined) {
         setToolLogCtx(ctx, { hop_mark_booked_ms: Date.now() - markStart });
       }
+    }
+  }
+  // D20-5b: the job is open — schedule the alarm-driven ring start (spec 1.2
+  // option A). Always scheduled on success; ring_mode is read later inside
+  // startRing. A failure is logged (error name only) and NEVER changes the
+  // create_job result or failure shape.
+  const ringStart = Date.now();
+  try {
+    await jobsStub.setRingAt(Date.now() + ringStartDelayMs(env));
+  } catch (err) {
+    log({
+      component: "mcp",
+      event: "ring_schedule_fail",
+      level: "warn",
+      tool: "create_job",
+      call_ref,
+      job_id,
+      error: err instanceof Error ? err.name : "unknown",
+      ...corr,
+    });
+  } finally {
+    if (ctx !== undefined) {
+      setToolLogCtx(ctx, { hop_ring_ms: Date.now() - ringStart });
     }
   }
   return { ok: true, job_id, reference_spoken: spoken(job_id) };

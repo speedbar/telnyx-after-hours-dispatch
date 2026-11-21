@@ -61,6 +61,7 @@ export interface JobStub {
     hazards?: string;
   }): Promise<{ ok: true; state: string } | { ok: false; reason: string }>;
   release(args: { job_id: string; reason: string }): Promise<{ released: boolean }>;
+  setRingAt(ms: number): Promise<{ ok: boolean }>;
   get(): Promise<{
     job_id: string;
     tech_id: string;

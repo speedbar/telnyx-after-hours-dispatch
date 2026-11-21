@@ -54,6 +54,7 @@ export interface LogFields {
   hop_brief_ms?: number;
   hop_mark_booked_ms?: number; // S1.9b
   hop_job_write_ms?: number; // S1.9b: same await as hop_brief_ms (the job write)
+  hop_ring_ms?: number; // D20-5b: the setRingAt schedule call in create_job
   flag_source?: "kv" | "cache" | "default" | "timeout"; // S1.9b: where the flag came from
   boot_age_ms?: number; // S1.9b: ms since this instance's module boot
   first_request?: boolean; // S1.9b: true exactly once per instance
@@ -107,6 +108,7 @@ export function formatLine(fields: LogFields, now: Date = new Date()): string {
     hop_brief_ms: fields.hop_brief_ms ?? null,
     hop_mark_booked_ms: fields.hop_mark_booked_ms ?? null,
     hop_job_write_ms: fields.hop_job_write_ms ?? null,
+    hop_ring_ms: fields.hop_ring_ms ?? null,
     flag_source: fields.flag_source ?? null,
     boot_age_ms: fields.boot_age_ms ?? null,
     first_request: fields.first_request ?? null,
@@ -132,6 +134,7 @@ export interface ToolLogCtx {
   hop_brief_ms?: number;
   hop_mark_booked_ms?: number;
   hop_job_write_ms?: number;
+  hop_ring_ms?: number;
   flag_source?: "kv" | "cache" | "default" | "timeout";
   eligible_count?: number;
 }
