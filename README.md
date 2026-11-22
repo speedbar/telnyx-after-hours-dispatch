@@ -10,7 +10,7 @@ It runs on Telnyx: a voice AI assistant with a workflow, a small TypeScript serv
 - Health check: https://dispatch-b823b5bf-9.telnyxcompute.com/health
 - Things to say: "my kitchen tap burst" for the urgent path, "there's a gas smell" for the safety line, "can I talk to a person" for the human transfer.
 
-**What ringing means for you.** The assistant takes the job on any call. The technician ring and the texts go to the numbers set in my deployment, which are my own test phones, and you can't change them from outside. So that nobody's call wakes me up while you review, ringing and texting are in dry-run mode: the whole call runs and the job is logged, but no phone rings. I switch them to live for the demo. If you'd like to feel the real ring on your own mobile, send me the number and I'll add it as a technician. Or run your own copy, below.
+**What ringing means for you.** The assistant takes the job on any call, and ringing and texting are live. The technician ring and the texts go to the numbers set in my deployment, which are my own test phones, and you can't change them from outside. So a test call will ring my phone, and if I don't pick up the assistant tries the next technician and then texts the manager. Ring and text volume is capped per day. If you'd rather feel the ring on your own mobile, send me the number and I'll add it as a technician. Or run your own copy, below.
 
 ## How it works
 

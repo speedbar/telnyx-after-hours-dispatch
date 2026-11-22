@@ -1,6 +1,36 @@
 # Decisions
-One entry per decision: Decision / Options considered / Choice / Why / Revisit if.
-Source: claude planning doc 09 section 4.2, plus decisions made while building. Where this file and an older planning note disagree, this file wins.
+
+Why the system is built the way it is. Each entry gives the options considered, the choice, why, and what would make me revisit it. The most useful ones to read first are D12 (workflow first), D13 (actors on the call path, KV off it) and D19 (guardrails in code, not prompts).
+
+| ID | Decision |
+|---|---|
+| D1 | One umbrella function |
+| D2 | Hand-rolled stateless MCP server |
+| D3 | Actor holds reservation truth; KV holds the rest |
+| D4 | Reservation is a hold with a TTL |
+| D5 | Idempotency on call_ref |
+| D6 | Accepted and declined outcomes |
+| D7 | Models |
+| D8 | Feature flags in KV |
+| D9 | No customer PII in logs |
+| D10 | KV key format |
+| D11 | Git workflow |
+| D12 | Architecture: managed AI Assistant with a Conversation Workflow |
+| D13 | Hot-path state lives in Stateful Actor storage; KV is the off-path system of record |
+| D14 | End-of-turn detection |
+| D15 | Delayed filler lines for MCP calls |
+| D16 | Golden set in two layers |
+| D17 | The server identifies the call and the job |
+| D18 | Scripted safety wording |
+| D19 | Guardrails in code, not prompts |
+| D20 | Technician ring: fail-safe modes, pure reducer, event-driven |
+| D20 addendum | Ring start runs in the function, the alarm keeps only the timing |
+| D20 addendum | The ring starts inline from create_job |
+| D20b-2 addendum | Accept SMS is one item per line |
+| D20b-2 | Natural spoken wording + RING_VOICE |
+| D20b-1 | Shorter spoken brief, full details by SMS after accept |
+| D20b-3 | Spoken urgency is the stored value, never mapped |
+| D20c | Manager alert when nobody accepts |
 
 ## D1 One umbrella function
 - Options: separate functions per concern (dv, mcp, events) vs one umbrella function `dispatch`.
@@ -17,6 +47,7 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 ## D3 Actor holds reservation truth; KV holds the rest
 - Choice: TechnicianActor owns availability and holds. KV holds read-mostly or recoverable data (jobs, flags, customers, idempotency). Actors do not touch KV.
 - Why: KV has no compare-and-set (last write wins), so a read-modify-write that must be exclusive belongs in an actor.
+- Update (D13): this was the first design. KV turned out to be too slow to read on the call path (BUG-003), so customers, flags and jobs now live in actors on the call path, and KV keeps the durable copy written at seed time.
 
 ## D4 Reservation is a hold with a TTL
 - Choice: default 90 s, set by DISPATCH_HOLD_TTL_S. An actor alarm expires it; every method also checks expiry lazily.
@@ -34,6 +65,7 @@ Source: claude planning doc 09 section 4.2, plus decisions made while building. 
 
 ## D8 Feature flags in KV
 - Choice: flag/dispatch_enabled and flag/technician_pool are read by /dv and passed as dynamic variables, so edges can route on them without a redeploy.
+- Update (D13): the flags are still written to KV when seeding, but `/dv` now reads them from DirectoryActor. The ring and SMS modes (`off`, `dry_run`, `live`) were added in D20.
 
 ## D9 No customer PII in logs
 - Choice: caller_hash = sha256(salt + e164) first 12 hex characters; LOG_SALT is a secret.

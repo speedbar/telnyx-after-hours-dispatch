@@ -1,5 +1,15 @@
 # Docs index
 
+## If you only have 15 minutes
+
+1. `../README.md`: what it is, how to try it, how to know it broke.
+2. `architecture.md`: one call from start to finish and where each part runs.
+3. `bug-journal.md`: what broke, how it was found, and what was done.
+4. `decisions.md`: why it is built this way (D1 onwards).
+5. `demo-script.md`: what the demo shows.
+
+Everything else is reference. It is there so you can check any claim.
+
 | If you want to... | Read |
 |---|---|
 | Understand the system in 5 minutes | `architecture.md` |

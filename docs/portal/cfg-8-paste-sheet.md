@@ -66,7 +66,7 @@ When everything is confirmed, move on immediately. Say nothing more.
 
 ## 3. Paste procedure
 
-1. Before pasting, confirm the live text equals cfg-7 (diff below). If it differs, stop and tell Claude.
+1. Before pasting, confirm the live text equals cfg-7 (diff below). If it differs, stop and work out why before pasting.
 2. Assistant, Instructions: select all, paste block 1.
 3. Workflow, Details node: select all, paste block 2.
 4. Save as a new version. Read both back and diff against this file. Promote only if identical. Previous version (cfg-7) is the rollback.

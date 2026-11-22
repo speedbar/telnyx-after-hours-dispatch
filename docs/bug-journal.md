@@ -1,5 +1,45 @@
 # Bug journal
-Each entry: When / where, Symptom, Evidence, Hypotheses ruled out, Root cause, Fix, Signal that found it, What we would add to catch it faster.
+
+Every real problem hit while building, written the same way: when and where, the symptom, the evidence, the root cause, the fix, and the signal that found it. Newest entries are at the bottom.
+
+Best trails to read first:
+
+- **BUG-003**, KV took 1.5 to 1.9 s per read and blew the webhook timeout. This changed the design (D13).
+- **BUG-012 and BUG-020**, the workflow collapsed into one node and its edges fired unreliably, so rules that must hold moved into the assistant instructions and into code.
+- **BUG-023**, a sink leak was called "urgent" after speech recognition mangled the words, which led to an urgency floor in code.
+- **BUG-024**, the manager text was silently not sent.
+- **BUG-027**, two calls fell back to the office number, and the per-step timers showed why in one log line.
+
+| ID | What went wrong |
+|---|---|
+| BUG-001 | Server-side secret scanner rejects `telnyx-edge ship` (false positive in SDK example values) |
+| BUG-002 | KV rejects keys containing a colon (and the design used colon keys) |
+| BUG-003 | KV operations take about 1.5 to 1.9 s each, and some fail intermittently, so /dv blows the dynamic-variables timeout |
+| BUG-004 | OpenCode run stalls after a long reasoning step on GLM-5.3 (no tool call, no file written) |
+| BUG-005 | reserve_technician takes about 1 s on a new call, 0.28 s on a replay |
+| BUG-006 | reserve_technician fires in the Details node, before the caller's name was asked |
+| BUG-007 | Fallback loop: 11 create_job calls with invented job ids |
+| BUG-008 | Fallback message claimed details were logged (false) |
+| BUG-009 | Model sends the caller's SIP address as call_ref; every tool call rejected |
+| BUG-010 | Model calls create_job in the Reserve node instead of reserve_technician |
+| BUG-011 | Rejected tool calls hide the cause in the logs |
+| BUG-012 | Workflow collapsed into the Triage node |
+| BUG-013 | False technician promise |
+| BUG-014 | Unscripted safety advice |
+| BUG-015 | Stacked filler messages |
+| BUG-016 | Assistant talked about a "SIP address" instead of asking for a callback number |
+| BUG-017 | House number dropped from the address |
+| BUG-018 | Invented detail in the summary ("kitchen sink" when the caller said "sink") |
+| BUG-019 | Ten seconds of dead air after "Let me log that now" |
+| BUG-020 | Workflow edges fire unreliably (Triage did Details' job, Job to Close never fired) |
+| BUG-021 | Call never ended: Hang Up was off in the Details node |
+| BUG-022 | Duplicate goodbyes |
+| BUG-023 | Model classified a sink leak as `urgent` after speech-to-text mangled the caller's words |
+| BUG-024 | Manager alert skipped: a "+61" number became "++61" and failed the allow-list |
+| BUG-025 | The ring started by the alarm never ran: the alarm's callback to /ring-start timed out |
+| BUG-026 | The assistant said its waiting line twice |
+| BUG-027 | Two calls fell back to the office number: the first read of a new JobActor took 10 to 14 s |
+| BUG-028 | A known caller was asked for the address and name again |
 
 ### BUG-001 Server-side secret scanner rejects `telnyx-edge ship` (false positive in SDK example values)
 When / where: 17 Nov 2026, `telnyx-edge ship` (CLI v0.5.18) of the Stateful Actor scaffold "actortest".
