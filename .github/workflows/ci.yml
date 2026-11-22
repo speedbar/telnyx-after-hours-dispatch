@@ -1,5 +1,5 @@
 # Deploy stays manual (`telnyx-edge ship`); a green build never changes the live system.
-name: ci
+name: Checks: typecheck, scrub, tests
 
 on:
   push:
