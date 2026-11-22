@@ -3,7 +3,9 @@
 Everything the Telnyx Portal holds for `dispatch-ai` that is not code lives here: assistant instructions, every node's text, every edge, every tool toggle. If it is not in this folder, it is not decided.
 
 Last read live from the Portal: 20 Nov 2026 (read-only, nothing changed by the read). That read was cfg-4. Nabeel pasted cfg-5 afterwards and reports it live; no read-back diff of cfg-5 is recorded here (do one after the next paste). List-number rendering of the stored text is still VERIFY.
-Config version this folder describes: **cfg-6, live since 20 Nov 2026** (pasted and promoted to main by Nabeel; E4 reworded). The cfg-6 edits are the assistant Instructions block and the Details, Reserve, Job and Fallback nodes (`consistency.md` section 5). Edge cases and what is and is not handled: `docs/edge-cases.md`.
+**Current live configuration (22 Nov 2026): cfg-9.** `cfg-8-paste-sheet.md` holds the live assistant Instructions block (emergency-services wording, name rule) and the live Details node text. `cfg-9-paste-sheet.md` adds the human-transfer tool settings and the "Human request" paragraph. Where those sheets differ from `assistant.md` and `nodes.md`, the paste sheets win; those two files and `edges.md` are the cfg-6 baseline. `cfg-5`, `cfg-6` and `cfg-7` are superseded.
+
+Config version the baseline files describe: **cfg-6, live since 20 Nov 2026** (pasted and promoted to main by Nabeel; E4 reworded). The cfg-6 edits are the assistant Instructions block and the Details, Reserve, Job and Fallback nodes (`consistency.md` section 5). Edge cases and what is and is not handled: `docs/edge-cases.md`.
 
 ## Files
 

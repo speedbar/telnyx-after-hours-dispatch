@@ -73,3 +73,8 @@ Date: 21 Nov 2026 (D20-5g). Live test sim-cb-2 (D20-5f deployed): the JobActor a
 
 ### V-023 SMS on accept (D20b-1): /v2/messages fields; live result pending
 Date: 21 Nov 2026 (D20b-1). Accept SMS sends verified against the Telnyx API reference: POST https://api.telnyx.com/v2/messages with to (E.164), text, type "SMS", messaging_profile_id (required with an alphanumeric sender ID) and from = the Alpha sender of profile dispatch-sms (supplied as SMS_FROM). Live result pending (owner runs the dry_run then live check in the task spec).
+
+Update 22 Nov 2026 (V-023): live result received. The accept SMS and the manager SMS both arrived on the owner's phone in live runs on 21 Nov (job JAGDYE manager_sms_status sent).
+
+### V-024 Warm transfer to a human (cfg-9): what the Portal actually does
+Date: 21 to 22 Nov 2026. The Telnyx docs do not describe how the human accepts or show this Portal screen, so this is observed behaviour. The Transfer tool was set to require acceptance, acceptance timeout 25 s, consult visibility Shared, beep to the receiver on, voicemail detection disabled. Findings: (1) the human accepts by saying yes, not by a keypad digit. (2) the tool execution timeout maxes at 60000 ms (90000 was rejected). (3) a spoken "connecting you now" line never played, so it was removed and the beep is the signal. (4) if the human says no or does not answer, the assistant tells the caller it could not connect and carries on logging the job. (5) the outcome shows in Portal conversation history, not in the function logs. Status: PASS for accept, no and no-answer by live calls; the Portal screen differs from the docs.

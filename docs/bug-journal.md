@@ -240,3 +240,33 @@ Fix (S1.8, spec item 2): severity and trade floors in code — whole-word keywor
 Signal that found it: reading the transcript.
 What we would add to catch it faster: a golden-set case replaying mangled STT phrases and asserting the stored urgency.
 Status: fixed in S1.8, pending live re-test.
+
+### BUG-024 Manager alert skipped: a "+61" number became "++61" and failed the allow-list
+When / where: 21 Nov 2026, about 11 pm, live test sim-dec-1 (D20c manager alert).
+Symptom: the ring exhausted but no manager text arrived; the job showed manager_sms_status skipped.
+Evidence: log line `sms_skipped` with error "prefix", found with `grep -E '"event":"sms_(skipped|dry_run|sent|failed|capped)"'`. A first grep for `sms_` matched every line because of the `sms_len` field.
+Hypotheses ruled out: sms_mode off or capped (the mode was live and the cap was not reached).
+Root cause: `toE164` in `src/lib/validate.ts` only prepends "+" to digits. MANAGER_PHONE was entered as "+61...", so it became "++61..." and failed the +61 allow-list. Unit tests used digits only, so they passed.
+Fix: workaround in place, MANAGER_PHONE stored as digits with country code (retest sim-dec-2: sent). Permanent fix deferred (D20d): normalise the secret with `normalisePhone`, and correct the .env.example comment.
+Signal that found it: a live test plus a log filter, not the unit tests.
+What we would add to catch it faster: a unit test that feeds E.164, local and digit forms of every phone secret through the same normaliser.
+Status: workaround live, code fix deferred.
+
+### BUG-025 The ring started by the alarm never ran: the alarm's callback to /ring-start timed out
+When / where: 21 Nov 2026, live test sim-cb-2 (D20-5f diagnostics deployed). Recorded as V-022.
+Symptom: the technician was not rung. The JobActor alarm POSTed to /ring-start on our own public host and timed out (ring_cb_ms 8001), and no /ring-start line appeared in the function logs.
+Evidence: ring_cb_error timeout, ring_cb_host correct, alarm ran as scheduled, no request line within 2 minutes.
+Hypotheses: (1) actor re-entrancy, the alarm holds the JobActor while /ring-start calls the same actor. (2) an actor making an outbound call to its own host. Neither proven.
+Root cause: not proven.
+Fix (D20-5g): create_job starts the ring inline under a 3 s cap, and the alarm path stays only as a fallback. Cost: create_job takes about 3 s longer, masked by one filler line.
+Signal that found it: a sim curl with diagnostic fields, then reading the callback timing.
+Status: worked around, cause open.
+
+### BUG-026 The assistant said its waiting line twice
+When / where: 21 Nov 2026, a real call after D20-5g.
+Symptom: the caller heard "please wait while I check on this" twice in one call.
+Evidence: the call log: reserve_technician took about 1.3 s in code (about 2.5 s on the caller side) and create_job about 3.9 s, and each crossed the 1500 ms filler delay.
+Root cause: the Portal's delay before the filler line was shorter than two normal tool calls.
+Fix: delay raised from 1500 ms to 3500 ms in the Portal.
+Signal that found it: hearing the call, then reading the timings.
+Status: fix applied, effect to confirm on the next call.

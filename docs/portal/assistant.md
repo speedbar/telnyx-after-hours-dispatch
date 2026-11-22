@@ -1,5 +1,7 @@
 # Assistant: dispatch-ai (canonical, cfg-6, live since 20 Nov 2026)
 
+> Baseline (cfg-6). The live text is now cfg-9: see `cfg-8-paste-sheet.md` and `cfg-9-paste-sheet.md`, which win where they differ.
+
 Paste the whole **Instructions** block below into the Portal (Agent section, Instructions). Do not paste part of it.
 
 ## Settings

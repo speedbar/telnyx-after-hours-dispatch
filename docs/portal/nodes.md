@@ -1,5 +1,7 @@
 # Workflow nodes (canonical, cfg-6, live since 20 Nov 2026)
 
+> Baseline (cfg-6). The live text is now cfg-9: see `cfg-8-paste-sheet.md` and `cfg-9-paste-sheet.md`, which win where they differ.
+
 7 nodes. Paste a whole node at a time. All prompt nodes: Instructions Mode = **Append to assistant instructions**, LLM = **Use assistant default**.
 
 Reminder from tests: the LLM edges are advisory. The model often stays in Triage or Details for the whole call and calls the tools from there (calls JAV3QX, JAPQMV, earlier JA3PZG). So the assistant text carries the full sequence, and node text must never contradict it. Where a rule is repeated in a node, it is listed in `consistency.md` section 3.

@@ -16,7 +16,7 @@ A voice assistant for a trade business (plumbing, electrical, gas). After hours 
 - **Code decides.** Reserving a technician, the ring, retries (2 attempts), the manager alert and the safety caps are deterministic code behind MCP tools, so a model mistake cannot double-book or skip escalation.
 - **Safety switches.** Ring and SMS each have a mode (`off`, `dry_run`, `live`) held in DirectoryActor. Only `+61` numbers can be dialled, with per-technician cooldown and daily caps.
 - **Human escalation.** Emergencies are told to call triple zero. If the caller asks for a person, the assistant uses Telnyx's transfer tool and the human accepts by voice; if nobody does, the assistant carries on logging the job.
-- **State.** Stateful Actors for hot state (TechnicianActor, JobActor, DirectoryActor). KV holds the seeded durable copy only.
+- **State.** Stateful Actors for hot state (TechnicianActor, JobActor, DirectoryActor). KV holds the durable copy written when the data is seeded. It is deliberately not read on the call path, because it measured 1.5 to 1.9 s per operation against a 1.5 s webhook timeout (`docs/decisions.md`, D13).
 
 MCP tools used by the workflow: `reserve_technician`, `create_job`, `release_technician`. `lookup_customer` is registered but not used by the workflow.
 
@@ -47,9 +47,23 @@ telnyx-edge metrics dispatch
 
 Beyond logs: per-hop latency timers on each tool call, and `GET /admin/job-state` (admin token) shows a call's ring and SMS status. The transfer outcome is visible in Portal conversation history, not in function logs.
 
+### If it breaks: how I would know within a minute, and what I would look at first
+
+Nothing pages me yet. Alerting is not built (exporting the logs to a collector with `telnyx-edge log-export set` would add it), so the one-minute check is a test call plus these, in order:
+
+1. `curl https://dispatch-b823b5bf-9.telnyxcompute.com/health`: a `false` means a missing secret or binding.
+2. `telnyx-edge metrics dispatch --errors`: 5xx rate and latency.
+3. `telnyx-edge logs dispatch --since 5m --last 250`: look for `"level":"error"` and an `outcome` of `fail`, `rejected` or `degraded`, then follow one call by its `call_ref`.
+4. `GET /admin/job-state` and `telnyx-edge actors logs TechnicianActor`: whether a ring or SMS was attempted and what the actor did.
+5. Portal conversation history for the last call: which node it was in and which tool it called.
+
+### One real bug, with the trail
+
+BUG-024: the manager text was silently not sent. The first signal was the job state showing the manager SMS as `skipped`. A log filter on the SMS events then showed an error `prefix`, and the cause was a `+61` number becoming `++61`, which failed the allow-list. The unit tests missed it because they only used digits. Full write-up and the other bugs: `docs/bug-journal.md`.
+
 ## How this was built
 
-All repo code was written with Telnyx Inference (Kimi-K3) through OpenCode (`@telnyx/opencode`), one task file per slice in `docs/tasks/`, with `AGENTS.md` as the standing rules. Planning, specs and review notes were drafted with Claude and owned by the author. Findings about the platform and tools: `docs/dogfooding.md`, `docs/bug-journal.md`, `docs/verify-log.md`.
+All repo code was written with Telnyx Inference (Kimi-K3) through OpenCode (`@telnyx/opencode`), one task file per slice in `docs/tasks/`, with `AGENTS.md` as the standing rules. The OpenCode config with the Telnyx plugin is `.opencode/opencode.json`. Planning, specs and review notes were drafted with Claude and owned by the author. Findings about the platform and tools: `docs/dogfooding.md`, `docs/bug-journal.md`, `docs/verify-log.md`.
 
 ## Limits
 
