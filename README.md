@@ -1,74 +1,122 @@
-# dispatch: after-hours urgent-call assistant
+# After-hours urgent-call dispatch
 
-A voice assistant for a trade business (plumbing, electrical, gas). After hours it answers the phone, decides whether the call is an emergency, collects the details, reserves an on-call technician, rings them, and texts the details. If nobody accepts, the manager gets a text. Built on Telnyx for the Forward Deployed Engineer (ANZ) take-home.
+When a pipe bursts at 2 am, the customer rings a trade business and gets voicemail. This project answers that call instead. A voice assistant picks up, works out whether it's an emergency, takes the address and the problem, books an on-call technician, rings them, and texts them the details. If nobody accepts, the manager gets a text.
+
+It runs on Telnyx: a voice AI assistant with a workflow, a small TypeScript service on Telnyx Edge Compute, and a phone number.
 
 ## Try it
 
-- Phone number: in the submission email.
-- Health check: `https://dispatch-b823b5bf-9.telnyxcompute.com/health` (booleans only, no secrets).
-- Say "my kitchen tap burst" for the urgent path. Ask for "a person" for the human transfer. Say "there is a gas smell" to hear the safety line.
+- Phone number: in the email I sent with this repo.
+- Health check: https://dispatch-b823b5bf-9.telnyxcompute.com/health
+- Things to say: "my kitchen tap burst" for the urgent path, "there's a gas smell" for the safety line, "can I talk to a person" for the human transfer.
+
+**What ringing means for you.** The assistant takes the job on any call. The technician ring and the texts go to the numbers set in my deployment, which are my own test phones, and you can't change them from outside. So that nobody's call wakes me up while you review, ringing and texting are in dry-run mode: the whole call runs and the job is logged, but no phone rings. I switch them to live for the demo. If you'd like to feel the real ring on your own mobile, send me the number and I'll add it as a technician. Or run your own copy, below.
 
 ## How it works
 
 ![Architecture overview](docs/architecture-overview.svg)
 
-- **Workflow first.** The call path is fixed: Triage, Details, Reserve, Job, Close, Hang Up, with a Fallback. The model only talks and extracts details inside a node.
-- **Code decides.** Reserving a technician, the ring, retries (2 attempts), the manager alert and the safety caps are deterministic code behind MCP tools, so a model mistake cannot double-book or skip escalation.
-- **Safety switches.** Ring and SMS each have a mode (`off`, `dry_run`, `live`) held in DirectoryActor. Only `+61` numbers can be dialled, with per-technician cooldown and daily caps.
-- **Human escalation.** Emergencies are told to call triple zero. If the caller asks for a person, the assistant uses Telnyx's transfer tool and the human accepts by voice; if nobody does, the assistant carries on logging the job.
-- **State.** Stateful Actors for hot state (TechnicianActor, JobActor, DirectoryActor). KV holds the durable copy written when the data is seeded. It is deliberately not read on the call path, because it measured 1.5 to 1.9 s per operation against a 1.5 s webhook timeout (`docs/decisions.md`, D13).
+The conversation follows a fixed path: triage, details, reserve a technician, log the job, close. If a tool fails, the call drops into a fallback that gives the caller the office number. The model's job is to talk and pull out details at each step. It doesn't decide who gets booked or whether anyone gets rung.
 
-MCP tools used by the workflow: `reserve_technician`, `create_job`, `release_technician`. `lookup_customer` is registered but not used by the workflow.
+That part is ordinary code, called by the assistant as tools. I did it this way because a wrong guess here costs a real call-out, or a missed emergency. Code can't double-book a technician, skip a retry, or forget to alert the manager. A model can.
 
-More: `docs/architecture.md`, `docs/decisions.md`, `docs/use-case.md`, `docs/portal/` (the exact Portal configuration).
+Some other choices worth knowing about:
 
-## Run and test
+- **Known callers.** When a call starts, the assistant asks my service who's ringing. If the number is in the customer list it says "Is the problem at 1 Smith St?" and "Am I speaking with Sam?" instead of asking everything from scratch.
+- **Safety switches.** Ringing and texting each have an off, dry-run and live mode, so I can test without waking anyone. Only Australian (+61) numbers can be dialled, and each technician has a cooldown and a daily cap.
+- **State.** Technician holds, job records and the customer list live in Telnyx Stateful Actors, which give atomic updates. KV stores a durable copy when data is seeded, but the call path doesn't read it. Reads took 1.5 to 1.9 s each, and the webhook gives up at 1.5 s (`docs/decisions.md`, D13).
+
+## When something goes wrong
+
+| What happens | What the caller or team gets |
+|---|---|
+| Danger (gas smell, water near power) | Told to call triple zero. |
+| Technician free | They're rung and press 1 to accept or 2 to decline. On accept they get the job by text. |
+| Technician declines or doesn't answer | The next technician is tried, two attempts in all. |
+| Nobody accepts | The manager gets a text and the job stays logged. |
+| A tool fails or takes over 5 s | The caller is given the office number and told to ring triple zero if in danger. |
+| Caller asks for a person | The call is transferred to a human, who accepts by voice. If nobody does, the assistant keeps logging the job. |
+
+## Run it yourself
+
+You don't need to, the live number is the demo. But you can build and test the code on your own machine. You need Node 18 or newer.
 
 ```
 npm ci
 npm run typecheck
 env -u MCP_TOKEN -u TELNYX_API_KEY -u ADMIN_TOKEN npm test
-telnyx-edge secrets add <NAME>      # names are in .env.example; never commit values
-telnyx-edge ship
 ```
 
-The `env -u` prefix stops real tokens in your shell from changing the auth tests.
+The tests need no Telnyx account. The `env -u` part stops tokens in your shell from changing the auth tests. Dependencies are in `package.json` and the lockfile, so there's no `requirements.txt`; this is a Node project.
 
-## Observability
+To deploy your own copy you need a Telnyx account and the `telnyx-edge` CLI:
 
-Logs are one JSON object per line on stdout, written only by `src/lib/log.ts`. Fields include `component`, `event`, `level`, `request_id` and `call_ref`. Phone numbers are never logged, only a salted hash.
+1. Log in with `telnyx-edge auth login`.
+2. `telnyx.toml` holds my function id. Create your own function and put its id and name under `[edge_compute]`. I haven't tried this from a clean account.
+3. Settings. `.env.example` lists every name with a comment. Put `TELNYX_API_KEY` in your shell and add the rest with `telnyx-edge secrets add <NAME>`. Never commit values. The ones that decide who gets contacted:
+   - `TECH_PHONES_JSON`: technician ids and their phones, for example `{"tech-01":"+61400000000"}`. Put your own mobile here to feel the ring.
+   - `MANAGER_PHONE`: gets the "nobody accepted" text. Digits with the country code, like `61400000000`, no plus sign.
+   - `FALLBACK_NUMBER`: the office number the assistant reads out when something fails.
+   - `ALLOWED_DIAL_PREFIXES`: rings and texts only go to `+61` unless you add other prefixes here, comma separated. Add yours if you're testing from another country.
+4. `telnyx-edge ship`, then open `/health` and check that nothing says `false`.
+5. Load customers and switch ringing on with `POST /admin/seed` (admin token). Until you do, ringing and texting stay in dry-run. This seeds one known caller and turns both on:
+   ```
+   {"customers":[{"phone":"+61400000000","record":{"name":"Sam","address":"1 Smith St, Sydney"}}],
+    "flags":{"ring_mode":"live","sms_mode":"live"}}
+   ```
+   Call from that number and the assistant greets you by name and address. A caller who isn't in the list is asked for everything. Use `"dry_run"` instead of `"live"` to test without ringing anyone.
+6. The assistant, workflow, MCP server and phone number are set up by hand in the Portal. The exact text is in `docs/portal/`.
+
+## Seeing what's happening
+
+Every log line is one JSON object, written in one place (`src/lib/log.ts`). Phone numbers are never logged, only a salted hash, and every tool call records how long each step took.
 
 ```
 telnyx-edge logs dispatch --since 30m --last 250
-telnyx-edge logs dispatch --type invocations --since 30m
 telnyx-edge actors logs TechnicianActor --since 60m
-telnyx-edge metrics dispatch
+telnyx-edge metrics dispatch --errors
 ```
 
-Beyond logs: per-hop latency timers on each tool call, and `GET /admin/job-state` (admin token) shows a call's ring and SMS status. The transfer outcome is visible in Portal conversation history, not in function logs.
+`GET /admin/job-state` (admin token) shows a call's ring and SMS status.
 
-### If it breaks: how I would know within a minute, and what I would look at first
+### If it breaks, how I'd know within a minute
 
-Nothing pages me yet. Alerting is not built (exporting the logs to a collector with `telnyx-edge log-export set` would add it), so the one-minute check is a test call plus these, in order:
+Nothing pages me yet, so the check is a test call, then these in order:
 
-1. `curl https://dispatch-b823b5bf-9.telnyxcompute.com/health`: a `false` means a missing secret or binding.
-2. `telnyx-edge metrics dispatch --errors`: 5xx rate and latency.
-3. `telnyx-edge logs dispatch --since 5m --last 250`: look for `"level":"error"` and an `outcome` of `fail`, `rejected` or `degraded`, then follow one call by its `call_ref`.
-4. `GET /admin/job-state` and `telnyx-edge actors logs TechnicianActor`: whether a ring or SMS was attempted and what the actor did.
-5. Portal conversation history for the last call: which node it was in and which tool it called.
+1. `curl` the `/health` URL. A `false` means a missing secret or binding.
+2. `telnyx-edge metrics dispatch --errors` for the error rate and latency.
+3. `telnyx-edge logs dispatch --since 5m --last 250`. Look for `"level":"error"`, then follow one call by its `call_ref`.
+4. `/admin/job-state` and the TechnicianActor logs, to see whether a ring or text was attempted.
+5. The last call in Portal conversation history, to see which node it was in and which tool it called.
 
-### One real bug, with the trail
+### Two bugs and how I found them
 
-BUG-024: the manager text was silently not sent. The first signal was the job state showing the manager SMS as `skipped`. A log filter on the SMS events then showed an error `prefix`, and the cause was a `+61` number becoming `++61`, which failed the allow-list. The unit tests missed it because they only used digits. Full write-up and the other bugs: `docs/bug-journal.md`.
+**The manager text was silently not sent (BUG-024, worked around).** The job state showed the manager SMS as `skipped`. Filtering the logs on SMS events showed an error called `prefix`. A `+61` number was being turned into `++61`, which failed the allow-list. My tests missed it because they only used numbers written as digits. For now the number is stored as digits with the country code, which avoids it. The proper fix is one line plus a test for every phone format, and it's still to do.
 
-## How this was built
+**Two calls fell back to the office number (BUG-027, cause still open).** The transcript showed a 5 s `tool_timeout` on `reserve_technician`. The log line for that call showed where the time went: 14,143 ms and 10,833 ms on reading a brand-new job record, while every other step was normal. A call 15 minutes later was fast again. I haven't found the cause, and the timers are how I caught it.
 
-All repo code was written with Telnyx Inference (Kimi-K3) through OpenCode (`@telnyx/opencode`), one task file per slice in `docs/tasks/`, with `AGENTS.md` as the standing rules. The OpenCode config with the Telnyx plugin is `.opencode/opencode.json`. Planning, specs and review notes were drafted with Claude and owned by the author. Findings about the platform and tools: `docs/dogfooding.md`, `docs/bug-journal.md`, `docs/verify-log.md`.
+Both are written up in `docs/bug-journal.md` with the other bugs.
 
-## Limits
+## How it was built
 
-- Technicians, customers and the roster are mock data.
-- Safety wording (gas, water near electrics) is scripted and needs review by a licensed tradesperson before any real use.
-- Only the Australian `+61` prefix is allowed for outbound rings and texts.
-- No published inbound concurrency limit was found for assistants; outbound calls default to a low concurrent limit on a new account.
-- The ring voice is a different TTS voice from the assistant's.
+All the code was written with Telnyx Inference (Kimi-K3) through OpenCode (`@telnyx/opencode`). Each piece of work has a task file in `docs/tasks/`, and `AGENTS.md` holds the standing rules. The OpenCode config is `.opencode/opencode.json`. I used Claude to help plan and review, and I own the specs and the decisions.
+
+## Limits and what I'd do next
+
+- Technicians, customers and the business name are made up.
+- The safety wording (gas, water near electrics) is scripted. A licensed tradesperson should check it before real use.
+- It only works for Australia. Rings and texts go to +61 numbers only, and the spoken lines assume triple zero. New Zealand isn't covered.
+- Speed is the weak spot. Any tool call over 5 s sends the caller to the fallback, and a slow first read happened once. Next I'd time-limit that read, start the technician reserve alongside it, and alert when a tool call passes 4 s.
+- Speech recognition can mishear, so the assistant reads back the address, name and number.
+- I couldn't find a published limit on simultaneous inbound calls. Outbound calls have a low limit on a new account.
+
+## More
+
+| For | Read |
+|---|---|
+| One call from start to finish, and where each part runs | `docs/architecture.md` |
+| Why things are built this way | `docs/decisions.md` |
+| What was tested, and what broke | `docs/test-matrix.md`, `docs/bug-journal.md` |
+| What was checked against Telnyx's docs | `docs/verify-log.md` |
+| The exact Portal setup | `docs/portal/` |
+| The demo run sheet | `docs/demo-script.md` |

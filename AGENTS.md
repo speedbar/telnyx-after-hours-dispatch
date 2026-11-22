@@ -31,16 +31,15 @@ A voice AI assistant for a trade business (plumber/electrician). After-hours cal
 - Never commit; the human commits.
 - Do not modify .opencode/.
 
-## Layout (target)
-src/index.ts      router: /dv /mcp /events /health /ops /admin/*; re-exports the actor classes
-src/lib/          log.ts sig.ts config.ts kv-keys.ts (S1.4b adds validate.ts pool.ts)
-src/routes/       dv.ts mcp.ts events.ts ops.ts
-src/tools/        lookup_customer.ts reserve_technician.ts create_job.ts release_technician.ts
-src/actors/       TechnicianActor.ts DirectoryActor.ts JobActor.ts
-assistant/        assistant.json workflow.json prompts/
-scripts/          scrub-sdk-examples.mjs simulate.ts seed.ts sign.ts apply-assistant.ts latency.ts
-tests/            sig.test.ts mcp.test.ts actor.test.ts guards.test.ts
-docs/             decisions.md bug-journal.md verify-log.md dogfooding.md test-matrix.md demo-script.md tasks/ evidence/
+## Layout
+src/index.ts      router: /health /dv /mcp /voice-events /ring-start /admin/*; re-exports the actor classes
+src/lib/          log sig config kv-keys validate pool brief sms ring ringrun ringstart techphones telnyx-api
+src/routes/       dv mcp voice ringstart ringtest seed tech jobstate
+src/tools/        lookup_customer reserve_technician create_job release_technician (index.ts holds the schemas)
+src/actors/       TechnicianActor DirectoryActor JobActor
+scripts/          scrub-sdk-examples.mjs (runs on postinstall, keep) sign.ts concurrency.ts chat-test.ts chat-test-lib.ts
+tests/            one *.test.ts per module, plus chat/scenarios.json for the conversation golden set
+docs/             architecture.md decisions.md bug-journal.md verify-log.md test-matrix.md demo-script.md dogfooding.md portal/ tasks/
 root              telnyx.toml package.json tsconfig.json .env.example
 
 ## Definition of done
