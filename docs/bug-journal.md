@@ -270,3 +270,23 @@ Root cause: the Portal's delay before the filler line was shorter than two norma
 Fix: delay raised from 1500 ms to 3500 ms in the Portal.
 Signal that found it: hearing the call, then reading the timings.
 Status: fix applied, effect to confirm on the next call.
+
+### BUG-027 Two calls fell back to the office number: the first read of a new JobActor took 10 to 14 s
+When / where: 23 Nov 2026, about 1:10 am Sydney, two live calls two minutes apart (cfg-10b test calls).
+Symptom: after the caller answered the safety question the assistant said it could not log the job and gave the office number.
+Evidence: the transcript shows `tool_timeout` after 5 s on `reserve_technician`. The `mcp_call` log line shows `hop_job_get_ms` 14143 and 10833 (total 14574 and 11307 ms), while `hop_flag_ms` (588, 783), `hop_tech_ms` (338, 413) and `hop_job_open_ms` (91, 59) were normal. `boot_age_ms` was about 26 hours and `first_request` was false, so it was not a function cold start. `/health` took 0.08 s.
+Side effect: reserve succeeded after Telnyx had given up (jobs JAGCSJ and JAY3FM, tech-01 held, nobody rung). The holds expire on their own (hold TTL 90 s).
+Root cause: not proven. The slow step is the JobActor read for a call ref that has no actor yet. Calls about 15 minutes later were fast again, so it looks like a transient slowdown in creating a new actor instance (VERIFY).
+Fix: none yet. Options if it recurs: start the technician reserve at the same time as the JobActor read, and put a time limit on the read.
+Signal that found it: the per-hop timers on the `mcp_call` line (S1.9), after the transcript showed the timeout.
+What we would add: an alert on `latency_ms` over 4000 for tool calls.
+Status: not reproduced on the next call, cause open.
+
+### BUG-028 A known caller was asked for the address and name again
+When / where: 22 Nov 2026, live call 511cb0b0 (cfg-9).
+Symptom: the dynamic variables showed `caller_known` true, but the assistant asked "What's the full address" and said it had no details.
+Evidence: every turn of the call had `flow_node_id` triage. The known-caller rule lived in the Details node, which never ran.
+Root cause: the model runs the whole call from Triage, so node-level rules do not fire.
+Fix (cfg-10): a `Caller record:` line with the variables in the assistant Instructions, and the known-caller rule moved into steps 2 and 3 of "Order of the call". Voice test on 23 Nov: the known caller heard "Is the problem at ...?" and "Am I speaking with Nabeel?", and an unknown caller was asked for their name as before.
+Signal that found it: the transcript and the dv log line side by side.
+Status: fixed and confirmed on a live call.
