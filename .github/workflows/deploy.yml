@@ -1,0 +1,58 @@
+# Manual deploy. Runs only when started by hand and confirmed by typing deploy. Deploys go live, so check CI is green first.
+name: Deploy to Telnyx Edge (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type deploy to confirm
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: inputs.confirm == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run check:scrub
+      - run: npm test
+
+  ship:
+    if: inputs.confirm == 'deploy'
+    needs: checks
+    runs-on: ubuntu-latest
+    env:
+      TELNYX_EDGE_VERSION: v0.5.18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install telnyx-edge CLI
+        run: |
+          tmp="$(mktemp -d)"
+          curl -fsSL "https://github.com/team-telnyx/edge-compute/releases/download/${TELNYX_EDGE_VERSION}/telnyx-edge-${TELNYX_EDGE_VERSION}-linux-amd64.tar.gz" -o "$tmp/cli.tar.gz"
+          tar xz -C "$tmp" -f "$tmp/cli.tar.gz"
+          sudo install -m 0755 "$(find "$tmp" -type f -name telnyx-edge | head -n 1)" /usr/local/bin/telnyx-edge
+          telnyx-edge --version
+      - name: Authenticate
+        env:
+          TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+        run: |
+          telnyx-edge auth api-key set "$TELNYX_API_KEY"
+          telnyx-edge auth status
+      - name: Ship
+        run: telnyx-edge ship --timeout 10m
+      - name: Health check
+        run: curl -fsS --max-time 20 https://dispatch-b823b5bf-9.telnyxcompute.com/health

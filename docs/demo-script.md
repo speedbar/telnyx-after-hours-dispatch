@@ -4,13 +4,24 @@ What the demo shows, in order, with timings. Everything shown is built and was r
 
 | # | Time | What happens | What to look at |
 |---|---|---|---|
-| 1 | 30 s | **The problem.** After hours, a trade business loses jobs to voicemail, and a missed emergency costs more than a false alarm. | `use-case.md` |
-| 2 | 90 s | **The design.** The call path is fixed. The model talks and extracts, code decides. Walk the system diagram and the call sequence. | `architecture.md` |
-| 3 | 3 min | **Live call, emergency.** Ring the number and say "my kitchen is flooding near the power points". The assistant gives the safety line, takes the address, name and number with read-backs, and reads out a job reference. The technician's phone rings, they press 1, and the details SMS arrives. | Phone, SMS |
-| 4 | 2 min | **The evidence.** Show the call in Portal conversation history (transcript, tool calls, node per turn). Then the function logs and the actor logs for the same call, and `/admin/job-state` for its ring and SMS status. | `telnyx-edge logs dispatch`, `telnyx-edge actors logs TechnicianActor`, `/admin/job-state` |
-| 5 | 90 s | **Failure and escalation.** A second call where the technician presses 2, then the manager gets one SMS when the attempts run out. Say what the flags do (`off`, `dry_run`, `live`) and that only `+61` numbers can be dialled. | Phone, SMS, `portal/` |
-| 6 | 60 s | **A human on request.** Ask for a person on a call and show the transfer, accepted by voice. | Portal conversation history |
-| 7 | 30 s | **Next.** Golden set in CI, a visible Escalate node, kill-switch and time-cap edges, a matched ring voice. | `architecture.md`, last section |
+| 1 | 20 s | **The problem.** After hours, a trade business loses jobs to voicemail, and a missed emergency costs more than a false alarm. | `use-case.md` |
+| 2 | 80 s | **The design.** The call path is fixed. The model talks and extracts, code decides. Walk the system diagram and the call sequence. | `architecture.md` |
+| 3 | 3 min | **Live call, emergency, from a known caller.** Ring from the second phone, whose number was seeded as a customer. Say "my kitchen is flooding near the power points". The assistant already knows the address and name, so it confirms them instead of asking ("Is the problem at ...?", "Am I speaking with ...?"). It gives the safety line, reads back the callback number and reads out a job reference. The technician's phone rings, they press 1, and the details SMS arrives. | Phone, SMS |
+| 4 | 2 min 30 s | **The evidence.** Portal conversation history for the call (transcript, tool calls, node per turn). The `dv_out` log line with `caller_known` true. The function logs and actor logs for the same call, and `/admin/job-state` for its ring and SMS status. Then KV: list the customer keys and read one (commands below). | `telnyx-edge logs dispatch`, `telnyx-edge actors logs TechnicianActor`, `/admin/job-state`, KV commands |
+| 5 | 80 s | **Failure and escalation.** A second call where the technician presses 2, then the manager gets one SMS when the attempts run out. Say what the flags do (`off`, `dry_run`, `live`) and that only `+61` numbers can be dialled. | Phone, SMS, `portal/` |
+| 6 | 50 s | **A human on request.** Ask for a person on a call and show the transfer, accepted by voice. | Portal conversation history |
+| 7 | 20 s | **Next.** The golden set against the live assistant, a manual deploy button, a visible Escalate node, kill-switch and time-cap edges. | `architecture.md`, last section |
+
+## KV, shown live
+
+Seeding writes the customer records and flags to KV and to the actors. To show the write and then the read:
+
+```
+telnyx-edge storage kv key list ce309914-f9dc-49c6-9429-632418ecec27 --prefix cust/
+telnyx-edge storage kv key get ce309914-f9dc-49c6-9429-632418ecec27 cust/<seeded number, digits only>
+```
+
+Do the seed (`POST /admin/seed`) on screen just before, so the audience sees the write, then the list and the get. Say plainly that the call path reads the same data from DirectoryActor, not KV, because KV took 1.5 to 1.9 s per read against a 1.5 s webhook timeout (D13).
 
 ## Mocked or not built
 
@@ -21,7 +32,8 @@ Technicians, customers and the roster are mock data. Safety wording is scripted 
 - **Why a workflow and not one prompt?** A fixed path gives predictable actions and is easier to test. The model only works inside a node (D12).
 - **Why not let the model decide who to call?** A model mistake could double-book a technician or skip the escalation. Reserve, ring, retry and the manager alert are deterministic code behind tools (D19, D20).
 - **What if two calls want the same technician?** The hold is atomic in TechnicianActor. Six parallel reserves gave one winner (V-014).
-- **Why actors and KV?** Actors on the hot path for speed. KV is the slow durable copy, kept off the voice path (D13).
+- **Why actors and KV?** Actors on the hot path for speed and atomic updates. KV is the durable copy written at seed time, kept off the voice path because it measured 1.5 to 1.9 s per read (D13). The right use of KV would be cached lookups and flags where a slow read is fine.
+- **Where does the personalisation come from?** The `/dv` webhook looks the caller up when the call starts and returns the name and address as dynamic variables. They are templated into the assistant instructions, which is why a known caller is only asked to confirm.
 - **What stops it dialling the wrong person?** Flags default to `dry_run`, a `+61` allow-list, a per-technician cooldown and daily caps.
 - **How would you know it broke?** Structured logs with a request id, actor logs, latency timers and `/admin/job-state`. No phone numbers are logged.
 - **What did the tooling cost?** `dogfooding.md` covers the OpenCode issues, the scaffold failure and the account balance that blocked inference for a day.
