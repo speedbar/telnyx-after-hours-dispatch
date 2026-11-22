@@ -107,6 +107,7 @@ All the code was written with Telnyx Inference (Kimi-K3) through OpenCode (`@tel
 - The safety wording (gas, water near electrics) is scripted. A licensed tradesperson should check it before real use.
 - It only works for Australia. Rings and texts go to +61 numbers only, and the spoken lines assume triple zero. New Zealand isn't covered.
 - Speed is the weak spot. Any tool call over 5 s sends the caller to the fallback, and a slow first read happened once. Next I'd time-limit that read, start the technician reserve alongside it, and alert when a tool call passes 4 s.
+- New callers are not remembered. The customer list is loaded by hand, so a first-time caller is asked everything again on the next call. Saving them after a job is the next step.
 - Speech recognition can mishear, so the assistant reads back the address, name and number.
 - I couldn't find a published limit on simultaneous inbound calls. Outbound calls have a low limit on a new account.
 
