@@ -10,7 +10,7 @@ What the demo shows, in order, with timings. Everything shown is built and was r
 | 4 | 2 min 30 s | **The evidence.** Portal conversation history for the call (transcript, tool calls, node per turn). The `dv_out` log line with `caller_known` true. The function logs and actor logs for the same call, and `/admin/job-state` for its ring and SMS status. Then KV: list the customer keys and read one (commands below). | `telnyx-edge logs dispatch`, `telnyx-edge actors logs TechnicianActor`, `/admin/job-state`, KV commands |
 | 5 | 80 s | **Failure and escalation.** A second call where the technician presses 2, then the manager gets one SMS when the attempts run out. Say what the flags do (`off`, `dry_run`, `live`) and that only `+61` numbers can be dialled. | Phone, SMS, `portal/` |
 | 6 | 50 s | **A human on request.** Ask for a person on a call and show the transfer, accepted by voice. | Portal conversation history |
-| 7 | 20 s | **Next.** The golden set against the live assistant, a manual deploy button, a visible Escalate node, kill-switch and time-cap edges. | `architecture.md`, last section |
+| 7 | 20 s | **Next.** The golden set in CI against the live assistant, a time-cap edge and a separate Escalate node. The kill-switch edge and the manual deploy workflow are already built. | `architecture.md`, last section |
 
 ## KV, shown live
 

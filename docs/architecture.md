@@ -53,7 +53,8 @@ The caller has already hung up before the technician is rung. The assistant neve
 ```mermaid
 flowchart LR
   T["Triage"] --> D["Details"] --> R["Reserve"] --> J["Job"]
-  R -->|"reserve failed"| F["Fallback"]
+  T -->|"dispatch_enabled is false"| F["Fallback"]
+  R -->|"reserve failed"| F
   J -->|"create_job failed"| F
   F --> CL["Close (speak node)"] --> H["Hang Up (tool node)"]
   J -.->|"on success the Job node reads the reference and ends the call itself"| H
@@ -99,6 +100,7 @@ flowchart LR
 | Technician declines or does not answer | Release, try the next technician. Two attempts in total. |
 | Nobody accepts | One SMS to the manager, sent once even if events repeat. |
 | Caller asks for a person | Transfer tool, human accepts by voice. If nobody does, the assistant says so and carries on logging the job. |
+| Dispatch switched off (`dispatch_enabled` false) | A variable-comparison edge sends the call from Triage to Fallback, and `reserve_technician` also refuses, so nobody is reserved or rung. |
 | Ring or SMS flag is `off`, `dry_run` or missing (missing counts as `dry_run`) | Nothing is dialled or sent. `dry_run` logs what would have happened. Only `live` acts. |
 | Number not `+61`, over the daily cap, or inside the cooldown | The ring or SMS is skipped and a log line says why. |
 | Telnyx webhook has a bad signature | Rejected before any logic runs. |
@@ -128,5 +130,5 @@ Measured on 20 to 21 Nov: `reserve_technician` about 1.3 s, `create_job` about 2
 
 - Technicians, customers and the roster are mock data.
 - Safety wording is scripted and needs review by a licensed tradesperson before real use.
-- Not built: a kill-switch edge, a time-cap edge, a golden set in CI, a visible Escalate node.
+- Not built: a time-cap edge, the golden set in CI, and a separate Escalate node (a caller who asks for a person is handled by the transfer tool). The kill-switch edge is built and was drilled live on 23 Nov.
 - No published inbound concurrency limit was found for assistants.

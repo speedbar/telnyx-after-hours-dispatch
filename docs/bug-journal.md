@@ -309,7 +309,7 @@ Evidence: the call log: reserve_technician took about 1.3 s in code (about 2.5 s
 Root cause: the Portal's delay before the filler line was shorter than two normal tool calls.
 Fix: delay raised from 1500 ms to 3500 ms in the Portal.
 Signal that found it: hearing the call, then reading the timings.
-Status: fix applied, effect to confirm on the next call.
+Status: fixed. Confirmed on a live call on 23 Nov: the line is heard once.
 
 ### BUG-027 Two calls fell back to the office number: the first read of a new JobActor took 10 to 14 s
 When / where: 23 Nov 2026, about 1:10 am Sydney, two live calls two minutes apart (cfg-10b test calls).
