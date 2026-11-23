@@ -60,4 +60,4 @@ jobs:
       - name: Ship
         run: telnyx-edge ship --timeout 10m
       - name: Health check
-        run: curl -fsS --max-time 20 https://dispatch-b823b5bf-9.telnyxcompute.com/health
+        run: curl -fsS --max-time 20 --retry 6 --retry-delay 10 --retry-all-errors https://dispatch-b823b5bf-9.telnyxcompute.com/health
