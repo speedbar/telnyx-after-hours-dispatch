@@ -37,6 +37,9 @@ Only what was actually run is marked PASS or FAIL. Everything else is NOT RUN. L
 | Filler line heard once after the 3500 ms delay (BUG-026) | NOT CONFIRMED |
 | Emergency-services line and name read-back (cfg-8) | NOT REPORTED |
 | One normal regression call after the last changes | NOT RUN |
-| Fallback spoken by voice (forced failure) | NOT RUN |
-| Failure drills: flags off, wrong token, wrong VOICE_CONNECTION_ID | NOT RUN |
+| Fallback spoken by voice (forced failure) | PASS (two real calls on 23 Nov, tool timeout BUG-027; and the kill-switch drill) |
+| Kill switch: `dispatch_enabled` false, call goes to the Fallback and the server blocks dispatch | PARTIAL (23 Nov): worked, but the assistant asked a few more questions first, about 70 s in all (BUG-028 pattern) |
+| Failure drills: wrong token, wrong VOICE_CONNECTION_ID | NOT RUN |
+| Known caller by voice: greeted by name and address, asked to confirm (cfg-10) | PASS (23 Nov) |
+| Langfuse traces of live calls (turns, tool calls, node per turn) | Reviewed 22 Nov, shows the node each turn ran in (BUG-028) |
 | Inbound call concurrency | NOT RUN (no published limit found) |

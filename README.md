@@ -79,6 +79,8 @@ telnyx-edge metrics dispatch --errors
 
 `GET /admin/job-state` (admin token) shows a call's ring and SMS status.
 
+The assistant is also connected to Langfuse in the Portal, so every call shows up there as a trace: each model turn, each tool call, tokens, timing, and the workflow node it ran in. That view showed that the model stays in the Triage node for most of the call, which is why the rules sit in the assistant instructions (BUG-028). Langfuse and the function logs aren't joined by one shared ID yet, so I line them up by time and `call_ref`.
+
 ### If it breaks, how I'd know within a minute
 
 Nothing pages me yet, so the check is a test call, then these in order:
