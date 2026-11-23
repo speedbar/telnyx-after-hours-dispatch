@@ -26,6 +26,10 @@ Some other choices worth knowing about:
 - **Safety switches.** Ringing and texting each have an off, dry-run and live mode, so I can test without waking anyone. Only Australian (+61) numbers can be dialled, and each technician has a cooldown and a daily cap.
 - **State.** Technician holds, job records and the customer list live in Telnyx Stateful Actors, which give atomic updates. KV stores a durable copy when data is seeded, but the call path doesn't read it. Reads took 1.5 to 1.9 s each, and the webhook gives up at 1.5 s (`docs/decisions.md`, D13).
 
+Where each piece of data lives, and what the actors and KV hold, is in `docs/data-model.md`.
+
+![Where the data lives](docs/data-flow.svg)
+
 ## When something goes wrong
 
 | What happens | What the caller or team gets |

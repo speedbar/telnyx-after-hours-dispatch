@@ -26,14 +26,3 @@ Do the seed (`POST /admin/seed`) on screen just before, so the audience sees the
 ## Mocked or not built
 
 Technicians, customers and the roster are mock data. Safety wording is scripted and needs review by a licensed tradesperson. The transfer outcome appears in Portal conversation history, not in function logs.
-
-## Likely questions
-
-- **Why a workflow and not one prompt?** A fixed path gives predictable actions and is easier to test. The model only works inside a node (D12).
-- **Why not let the model decide who to call?** A model mistake could double-book a technician or skip the escalation. Reserve, ring, retry and the manager alert are deterministic code behind tools (D19, D20).
-- **What if two calls want the same technician?** The hold is atomic in TechnicianActor. Six parallel reserves gave one winner (V-014).
-- **Why actors and KV?** Actors on the hot path for speed and atomic updates. KV is the durable copy written at seed time, kept off the voice path because it measured 1.5 to 1.9 s per read (D13). The right use of KV would be cached lookups and flags where a slow read is fine.
-- **Where does the personalisation come from?** The `/dv` webhook looks the caller up when the call starts and returns the name and address as dynamic variables. They are templated into the assistant instructions, which is why a known caller is only asked to confirm.
-- **What stops it dialling the wrong person?** Flags default to `dry_run`, a `+61` allow-list, a per-technician cooldown and daily caps.
-- **How would you know it broke?** Structured logs with a request id, actor logs, latency timers and `/admin/job-state`. No phone numbers are logged.
-- **What did the tooling cost?** `dogfooding.md` covers the OpenCode issues, the scaffold failure and the account balance that blocked inference for a day.

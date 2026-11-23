@@ -13,6 +13,7 @@ Everything else is reference. It is there so you can check any claim.
 | If you want to... | Read |
 |---|---|
 | Understand the system in 5 minutes | `architecture.md` |
+| See what each actor and KV stores | `data-model.md` and `data-flow.svg` |
 | See why it is built this way | `decisions.md` (numbered D1 onwards) and `use-case.md` |
 | Follow the demo | `demo-script.md` |
 | See what was tested and what broke | `test-matrix.md`, `bug-journal.md`, `edge-cases.md` |

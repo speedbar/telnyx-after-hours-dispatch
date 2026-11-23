@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 820" width="1000" height="820" font-family="Helvetica, Arial, sans-serif" xmlns:c2pa="http://c2pa.org/manifest">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#44566c"/></marker></defs>
+<rect x="1" y="1" width="998" height="818" rx="10" fill="#ffffff" stroke="#c5d0dc" stroke-width="2"/>
+<path d="M1,11 a10,10 0 0 1 10,-10 h978 a10,10 0 0 1 10,10 v67 h-998 z" fill="#0f2a43"/>
+<text x="30" y="34" font-size="20" fill="#ffffff" text-anchor="start" font-weight="700">Where the data lives</text>
+<text x="30" y="54" font-size="12" fill="#b9c8d8" text-anchor="start">What each store holds, and which part of the code reads or writes it.</text>
+<rect x="30" y="60" width="15" height="15" rx="3" fill="#8fa6bd" stroke="#ffffff" stroke-width="1"/>
+<text x="52" y="72" font-size="12" fill="#ffffff" text-anchor="start">Our code (Edge function)</text>
+<rect x="255.60000000000002" y="60" width="15" height="15" rx="3" fill="#4a90e2" stroke="#ffffff" stroke-width="1"/>
+<text x="277.6" y="72" font-size="12" fill="#ffffff" text-anchor="start">Stateful Actor</text>
+<rect x="407.20000000000005" y="60" width="15" height="15" rx="3" fill="#e0a03a" stroke="#ffffff" stroke-width="1"/>
+<text x="429.20000000000005" y="72" font-size="12" fill="#ffffff" text-anchor="start">KV</text>
+<rect x="470.00000000000006" y="60" width="15" height="15" rx="3" fill="#5fb89a" stroke="#ffffff" stroke-width="1"/>
+<text x="492.00000000000006" y="72" font-size="12" fill="#ffffff" text-anchor="start">Sent to Telnyx or the caller</text>
+<rect x="725.2" y="60" width="15" height="15" rx="3" fill="#c5d0dc" stroke="#ffffff" stroke-width="1"/>
+<text x="747.2" y="72" font-size="12" fill="#ffffff" text-anchor="start">Notes</text>
+<rect x="30" y="140" width="200" height="50" rx="7" fill="#ffffff" stroke="#5b7a99" stroke-width="1.5"/>
+<text x="130.0" y="162.0" font-size="12.5" fill="#1c2b3a" text-anchor="middle" font-weight="700">POST /admin/seed</text>
+<text x="130.0" y="179.0" font-size="10.5" fill="#44566c" text-anchor="middle">writes switches and customers</text>
+<rect x="30" y="215" width="200" height="50" rx="7" fill="#ffffff" stroke="#5b7a99" stroke-width="1.5"/>
+<text x="130.0" y="237.0" font-size="12.5" fill="#1c2b3a" text-anchor="middle" font-weight="700">POST /dv</text>
+<text x="130.0" y="254.0" font-size="10.5" fill="#44566c" text-anchor="middle">call start: reads, returns variables</text>
+<rect x="30" y="315" width="200" height="50" rx="7" fill="#ffffff" stroke="#5b7a99" stroke-width="1.5"/>
+<text x="130.0" y="337.0" font-size="12.5" fill="#1c2b3a" text-anchor="middle" font-weight="700">reserve_technician</text>
+<text x="130.0" y="354.0" font-size="10.5" fill="#44566c" text-anchor="middle">holds one tech, also opens the job</text>
+<rect x="30" y="495" width="200" height="50" rx="7" fill="#ffffff" stroke="#5b7a99" stroke-width="1.5"/>
+<text x="130.0" y="517.0" font-size="12.5" fill="#1c2b3a" text-anchor="middle" font-weight="700">create_job</text>
+<text x="130.0" y="534.0" font-size="10.5" fill="#44566c" text-anchor="middle">adds caller details, starts the ring</text>
+<rect x="30" y="575" width="200" height="50" rx="7" fill="#ffffff" stroke="#5b7a99" stroke-width="1.5"/>
+<text x="130.0" y="597.0" font-size="12.5" fill="#1c2b3a" text-anchor="middle" font-weight="700">release_technician</text>
+<text x="130.0" y="614.0" font-size="10.5" fill="#44566c" text-anchor="middle">closes job, frees the technician</text>
+<rect x="30" y="655" width="200" height="64" rx="7" fill="#ffffff" stroke="#5b7a99" stroke-width="1.5"/>
+<text x="130.0" y="684.0" font-size="12.5" fill="#1c2b3a" text-anchor="middle" font-weight="700">Ring and SMS logic</text>
+<text x="130.0" y="701.0" font-size="10.5" fill="#44566c" text-anchor="middle">press 1 or 2, texts, escalation</text>
+<rect x="330" y="130" width="350" height="152" rx="8" fill="#e3eefa" stroke="#3f6fa3" stroke-width="1.7"/>
+<text x="346" y="154" font-size="14" fill="#1c2b3a" text-anchor="start" font-weight="700">DirectoryActor</text>
+<text x="346" y="171" font-size="11" fill="#44566c" text-anchor="start">one, named "directory"</text>
+<text x="346" y="192" font-size="11.5" fill="#1c2b3a" text-anchor="start">flag/ring_mode: off | dry_run | live</text>
+<text x="346" y="209" font-size="11.5" fill="#1c2b3a" text-anchor="start">flag/sms_mode: off | dry_run | live</text>
+<text x="346" y="226" font-size="11.5" fill="#1c2b3a" text-anchor="start">flag/dispatch_enabled: "true" | "false"</text>
+<text x="346" y="243" font-size="11.5" fill="#1c2b3a" text-anchor="start">cust/&lt;digits&gt;: {name, address} as JSON text</text>
+<text x="346" y="260" font-size="11.5" fill="#1c2b3a" text-anchor="start">count/&lt;name&gt;/&lt;day&gt;: number (ring and SMS daily caps, 20)</text>
+<rect x="330" y="300" width="350" height="160" rx="8" fill="#e3eefa" stroke="#3f6fa3" stroke-width="1.7"/>
+<text x="346" y="324" font-size="14" fill="#1c2b3a" text-anchor="start" font-weight="700">TechnicianActor</text>
+<text x="346" y="341" font-size="11" fill="#44566c" text-anchor="start">one per technician (tech-01, tech-02, tech-03)</text>
+<text x="346" y="362" font-size="11.5" fill="#1c2b3a" text-anchor="start">state.status: available | held | dispatched | off_shift</text>
+<text x="346" y="379" font-size="11.5" fill="#1c2b3a" text-anchor="start">held_for: call_ref, job_id, expires_at (90 s)</text>
+<text x="346" y="396" font-size="11.5" fill="#1c2b3a" text-anchor="start">dispatched_for: call_ref, job_id, until (30 min)</text>
+<text x="346" y="413" font-size="11.5" fill="#1c2b3a" text-anchor="start">last_ring_at (60 s cooldown between rings)</text>
+<text x="346" y="430" font-size="11.5" fill="#1c2b3a" text-anchor="start">alarm: clears an expired hold</text>
+<rect x="330" y="478" width="350" height="248" rx="8" fill="#e3eefa" stroke="#3f6fa3" stroke-width="1.7"/>
+<text x="346" y="502" font-size="14" fill="#1c2b3a" text-anchor="start" font-weight="700">JobActor</text>
+<text x="346" y="519" font-size="11" fill="#44566c" text-anchor="start">one per call, named by its call_ref</text>
+<text x="346" y="540" font-size="11.5" fill="#1c2b3a" text-anchor="start">job_id, tech_id, state: reserved | briefed | released</text>
+<text x="346" y="557" font-size="11.5" fill="#1c2b3a" text-anchor="start">urgency, trade, suburb, summary, hazards, flags</text>
+<text x="346" y="574" font-size="11.5" fill="#1c2b3a" text-anchor="start">customer_name, address, contact_phone, details</text>
+<text x="346" y="591" font-size="11.5" fill="#1c2b3a" text-anchor="start">dispatch_state: ringing | dispatched | unassigned</text>
+<text x="346" y="608" font-size="11.5" fill="#1c2b3a" text-anchor="start">ring: status, attempt, tried[], outcome_log[]</text>
+<text x="346" y="625" font-size="11.5" fill="#1c2b3a" text-anchor="start">sms_status, manager_sms_status</text>
+<text x="346" y="642" font-size="11.5" fill="#1c2b3a" text-anchor="start">retention_at: deleted after 7 days (alarm)</text>
+<text x="346" y="659" font-size="11.5" fill="#1c2b3a" text-anchor="start">created_at, updated_at</text>
+<rect x="730" y="130" width="240" height="112" rx="8" fill="#fdf3e3" stroke="#b8812f" stroke-width="1.7"/>
+<text x="746" y="154" font-size="14" fill="#1c2b3a" text-anchor="start" font-weight="700">KV: dispatch-kv</text>
+<text x="746" y="171" font-size="11" fill="#44566c" text-anchor="start">durable copy, not read on a call</text>
+<text x="746" y="192" font-size="11.5" fill="#1c2b3a" text-anchor="start">cust/&lt;digits&gt;</text>
+<text x="746" y="209" font-size="11.5" fill="#1c2b3a" text-anchor="start">flag/&lt;name&gt;</text>
+<text x="746" y="226" font-size="11.5" fill="#1c2b3a" text-anchor="start">written only by /admin/seed</text>
+<rect x="730" y="262" width="240" height="168" rx="8" fill="#e8f4ee" stroke="#4f8f78" stroke-width="1.7"/>
+<text x="746" y="286" font-size="14" fill="#1c2b3a" text-anchor="start" font-weight="700">Variables sent to the assistant</text>
+<text x="746" y="303" font-size="11" fill="#44566c" text-anchor="start">returned by /dv at call start</text>
+<text x="746" y="324" font-size="11.5" fill="#1c2b3a" text-anchor="start">call_ref, business_name</text>
+<text x="746" y="341" font-size="11.5" fill="#1c2b3a" text-anchor="start">caller_known ("true" or "false")</text>
+<text x="746" y="358" font-size="11.5" fill="#1c2b3a" text-anchor="start">customer_name, customer_address</text>
+<text x="746" y="375" font-size="11.5" fill="#1c2b3a" text-anchor="start">dispatch_enabled</text>
+<text x="746" y="392" font-size="11.5" fill="#1c2b3a" text-anchor="start">fallback_number_spoken</text>
+<text x="746" y="409" font-size="11.5" fill="#1c2b3a" text-anchor="start">hold_ttl_s</text>
+<rect x="730" y="450" width="240" height="118" rx="8" fill="#f8fafc" stroke="#9fb3c8" stroke-width="1.7"/>
+<text x="746" y="474" font-size="14" fill="#1c2b3a" text-anchor="start" font-weight="700">Logs (one JSON line each)</text>
+<text x="746" y="498" font-size="11.5" fill="#1c2b3a" text-anchor="start">Salted hashes only (caller, call)</text>
+<text x="746" y="515" font-size="11.5" fill="#1c2b3a" text-anchor="start">No names, numbers or addresses</text>
+<text x="746" y="532" font-size="11.5" fill="#1c2b3a" text-anchor="start">Step timers on every tool call</text>
+<rect x="730" y="588" width="240" height="138" rx="8" fill="#f8fafc" stroke="#9fb3c8" stroke-width="1.7"/>
+<text x="746" y="612" font-size="14" fill="#1c2b3a" text-anchor="start" font-weight="700">Texts and rings</text>
+<text x="746" y="636" font-size="11.5" fill="#1c2b3a" text-anchor="start">Technician: details text after</text>
+<text x="746" y="653" font-size="11.5" fill="#1c2b3a" text-anchor="start">press 1 (plain SMS)</text>
+<text x="746" y="670" font-size="11.5" fill="#1c2b3a" text-anchor="start">Manager: alert if nobody accepts</text>
+<text x="746" y="687" font-size="11.5" fill="#1c2b3a" text-anchor="start">Rings only to allowed prefixes (+61)</text>
+<line x1="230" y1="165" x2="330" y2="165" stroke="#44566c" stroke-width="1.7" marker-end="url(#ah)"/>
+<text x="280" y="158" font-size="10.5" fill="#44566c" text-anchor="middle">writes</text>
+<polyline points="130,140 130,112 850,112 850,130" fill="none" stroke="#44566c" stroke-width="1.7" stroke-dasharray="6 4" marker-end="url(#ah)"/>
+<text x="490" y="106" font-size="10.5" fill="#44566c" text-anchor="middle">also writes a copy to KV (slow, 1.5 to 1.9 s per write)</text>
+<line x1="230" y1="240" x2="330" y2="240" stroke="#44566c" stroke-width="1.7" marker-end="url(#ah)"/>
+<text x="280" y="233" font-size="10.5" fill="#44566c" text-anchor="middle">reads</text>
+<polyline points="680,236 706,236 706,318 730,318" fill="none" stroke="#44566c" stroke-width="1.7" stroke-dasharray="6 4" marker-end="url(#ah)"/>
+<line x1="230" y1="340" x2="330" y2="340" stroke="#44566c" stroke-width="1.7" marker-end="url(#ah)"/>
+<text x="280" y="333" font-size="10.5" fill="#44566c" text-anchor="middle">holds</text>
+<line x1="230" y1="520" x2="330" y2="520" stroke="#44566c" stroke-width="1.7" marker-end="url(#ah)"/>
+<text x="280" y="513" font-size="10.5" fill="#44566c" text-anchor="middle">updates</text>
+<line x1="230" y1="600" x2="330" y2="600" stroke="#44566c" stroke-width="1.7" marker-end="url(#ah)"/>
+<text x="280" y="593" font-size="10.5" fill="#44566c" text-anchor="middle">closes</text>
+<line x1="230" y1="687" x2="330" y2="687" stroke="#44566c" stroke-width="1.7" marker-end="url(#ah)"/>
+<text x="280" y="680" font-size="10.5" fill="#44566c" text-anchor="middle">state</text>
+<rect x="30" y="748" width="940" height="52" rx="8" fill="#f8fafc" stroke="#c5d0dc" stroke-width="1.5"/>
+<text x="48" y="770" font-size="12.5" fill="#1c2b3a" text-anchor="start" font-weight="700">Reading the lifetimes</text>
+<text x="48" y="788" font-size="11" fill="#44566c" text-anchor="start">A hold lasts 90 s unless a job uses it. After a technician accepts, they stay busy for 30 min. A job record is deleted after 7 days. Dashed lines are copies or optional paths.</text>
+<metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTo1OGIyMDJhOS1mMGQ2LTRiMjQtYjhiNC0yZTUzYjk4MmUwZmIAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaCL3+lO7szCCwgVa66cgzjgAAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDpjNTdjNzk4YS01MzhkLTQzMWMtOWIzZC0wODEzNmVlNWNhZDZscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNoszdGzGE80P035qm0TJycHQAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggOIwGUZC5obzObJ+X7GXkrzJr68d8WxE8lxZ0UmY7c96kZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaB8wn1r1gZHAUgcJFYn2y9EAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRMAAAAAAAAAAAAAAAAZGhhc2hYIEjQ6AFoTfgnVkHn4wt5PRfb0faKYqWhw0sKU33RxQjWZG5hbWVuanVtYmYgbWFuaWZlc3RqZXhjbHVzaW9uc4GiZXN0YXJ0GS9MZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjU4YjIwMmE5LWYwZDYtNGIyNC1iOGI0LTJlNTNiOTgyZTBmYi9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOjdjNjIwZGRlLWVmMDctNDc0Ny05ZjBlLWY2Y2U0NTA1ZGExMHJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCA4jAZRkLmhvM5sn5fsZeSvMmvrx3xbETyXFnRSZjtz3qJjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggaq6jGzSqhA1quXKtm5yTu8qHqcFvnNcQ6CFgCYpWwsyiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggdc/vWurxuMpWEX9wl2zPqS0Kd1tZpjAz9nQCbxcWC510Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQInOSkF1mDBS/l18JTgy90nKSx3oucY0sJ/4j8uzuGMVcj5P1aE4X/z8vn/+2QqzdQk3LnUzR5FtCr/wth2lqek=</c2pa:manifest></metadata></svg>
