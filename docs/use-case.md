@@ -12,5 +12,5 @@ Voice assistant that triages, captures details, reserves an on-call technician a
 
 ## Risks
 - Safety wording must be signed off by a licensed tradesperson.
-- A wrong triage costs a callout (false alarm) or a delayed emergency (false negative). Triage is tested with a golden set (planned).
+- A wrong triage costs a callout (false alarm) or a delayed emergency (false negative). Triage is tested with a golden set of scripted conversations (`scripts/chat-test.ts`, run by hand).
 - Calls must hand off to a human if the assistant fails (Fallback node).

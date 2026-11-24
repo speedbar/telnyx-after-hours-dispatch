@@ -20,4 +20,4 @@ Everything else is reference. It is there so you can check any claim.
 | See what was checked against Telnyx's docs | `verify-log.md` |
 | See how the tooling behaved | `dogfooding.md` |
 | Reproduce the Portal configuration | `portal/` (nodes, edges, assistant text, paste sheets) |
-| See how the code was produced with OpenCode | `tasks/` (one spec per slice) and `../AGENTS.md` |
+| See how the code was produced with OpenCode | `tasks/` (one spec per slice, kept as written, so status lines in them are from when each was handed over) and `../AGENTS.md` |

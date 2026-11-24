@@ -86,7 +86,7 @@ Why the system is built the way it is. Each entry gives the options considered, 
 - Why not B: we would rebuild turn detection, barge-in, idle handling and the transfer handshake, and lose the workflow and warm-transfer features the brief scores.
 - Why not C as the core: dispatch is transactional and state-based (reserve a technician, hand off the call). Exact lookups (customer, flags, job) belong in KV and the actor, not in similarity search. A vector store answers "what do our documents say", which is not this problem.
 - Where a vector store could fit: an optional FAQ knowledge base on the assistant (service area, after-hours rates, what to do while waiting). Not in the build plan; a Day 3 stretch only if everything else passes. Known unknowns: the workflows doc does not cover knowledge or retrieval scoping per node, and retrieval latency on a voice turn is unmeasured.
-- Revisit if: the Portal workflow editor cannot express the flow, or Stephen asks for a knowledge-base example.
+- Revisit if: the Portal workflow editor cannot express the flow, or a knowledge-base example is wanted.
 
 ## D13 Hot-path state lives in Stateful Actor storage; KV is the off-path system of record (added 18 Nov 2026)
 - Evidence: V-010 / BUG-003. KV is about 1.5 to 1.9 s per operation; actor storage is under 0.1 s.
@@ -101,14 +101,14 @@ Why the system is built the way it is. Each entry gives the options considered, 
 - Choice: short filler lines at 800 ms and 2500 ms while a tool runs, so the caller does not hear silence.
 
 ## D16 Golden set in two layers (added 19 Nov 2026)
-- Choice: layer 1 checks tool schemas and server behaviour deterministically; layer 2 replays scripted conversations. Status: planned, not built.
+- Choice: layer 1 checks tool schemas and server behaviour deterministically; layer 2 replays scripted conversations. Status: layer 1 is in `tests/`; layer 2 is `scripts/chat-test.ts`, run by hand and not in CI.
 
-## D17 The server identifies the call and the job (added 19 Nov 2026, proposed)
+## D17 The server identifies the call and the job (added 19 Nov 2026)
 - Why: the model made up call_ref and job_id (BUG-006 to 011). The server now prefers Telnyx call metadata (field names unverified, V-016), else a safe hash, and derives job_id from the JobActor record.
-- Failures return next:"fallback", retry:false and the missing fields. Status: written in the working tree, not shipped.
+- Failures return next:"fallback", retry:false and the missing fields. Status: shipped in S1.5 and live since 19 Nov (V-016).
 
 ## D18 Scripted safety wording (added 19 Nov 2026)
-- Choice: fixed sentences for water near electrics and for gas, no other safety advice. Gas: do not use switches or flames, leave and call triple zero from outside. Status: pending live check and tradesperson review.
+- Choice: fixed sentences for water near electrics and for gas, no other safety advice. Gas: do not use switches or flames, leave and call triple zero from outside. Status: the gas line has been heard live; a licensed tradesperson should review the wording before real use.
 
 ## D19 Guardrails in code, not prompts (added 20 Nov 2026, S1.8)
 - Evidence: live tests 5 and 6 (19 Nov 2026) and a code review. Speech-to-text mangles caller words ("water is drying out fast" was classed `urgent`), reserve_technician ignored the job's trade when walking the pool, normalisePhone accepted undiallable callbacks, a second create_job overwrote confirmed details, and job records with personal data were kept forever.

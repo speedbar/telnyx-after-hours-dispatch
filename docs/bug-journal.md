@@ -92,7 +92,7 @@ Evidence: curl time_total for each call (V-015). Replay of smoke-2 0.28 s vs fre
 Hypotheses ruled out: route or auth overhead (tools/list is 0.09 s); cold function (repeated warm calls stayed about 1 s); technician actor itself (replay uses it and is fast).
 Root cause (probable, VERIFY): the first access to a brand-new JobActor instance (its name is the call_ref, so every real call makes one) costs about 0.8 s. The slow 2.6 s call is not explained yet and may be variance.
 Fix: not yet. Options: (a) cover the pause with a filler line and a longer tool timeout in the Portal (no code, free); (b) move the job record into the fixed-name technician actors so no new instance is created on the reserve path (small OpenCode spec).
-Status: OPEN, mitigation (a) first; decide on (b) after the first real calls.
+Status: mitigated. Live calls on 20 to 21 Nov measured `reserve_technician` at about 1.3 s, and the filler line covers the wait.
 Signal that found it: curl time_total on each tool; the mcp_call latency_ms log field should confirm the server-side figure.
 What we would add to catch it faster: a timed live call for every new route (already the rule since BUG-003), run with a fresh call_ref as well as a replay.
 
@@ -105,7 +105,7 @@ Root cause: Telnyx MCP tools are assistant-level, not per-node, so the model can
 Fix (S1.5, spec items 3 and 4): reserve_technician now requires customer_name, address and callback_number, so an early call fails validation; tool descriptions say when each tool may be called.
 Signal that found it: the live call transcript.
 What we would add to catch it faster: a transcript review checklist against the intended node order after every live test.
-Status: fixed in S1.5, pending live re-test.
+Status: fixed in S1.5. Not seen in later live calls (20 to 23 Nov).
 
 ### BUG-007 Fallback loop: 11 create_job calls with invented job ids
 When / where: 18 Nov 2026, live test 1, fallback branch of the workflow.
@@ -116,7 +116,7 @@ Root cause: job_id was a required model-carried input, so a model that never had
 Fix (S1.5, spec items 2 and 5): job_id is read from the JobActor record (the model's value is ignored), and every failure carries next:"fallback" and retry:false so the flow has a defined way out.
 Signal that found it: the live call transcript.
 What we would add to catch it faster: an alert on N consecutive identical failing tool calls in one conversation.
-Status: fixed in S1.5, pending live re-test.
+Status: fixed in S1.5. Not seen in later live calls (20 to 23 Nov).
 
 ### BUG-008 Fallback message claimed details were logged (false)
 When / where: 18 Nov 2026, live tests, fallback branch.
@@ -127,7 +127,7 @@ Root cause: the fallback prompt wording asserted an action the workflow never pe
 Fix: Portal prompt wording change only (no code). Out of the S1.5 diff by design.
 Signal that found it: reading the transcript against the actual system state.
 What we would add to catch it faster: a rule that every spoken claim about a side effect must map to a tool call in the same call.
-Status: fixed in S1.5, pending live re-test.
+Status: fixed in S1.5. Not seen in later live calls (20 to 23 Nov).
 
 ### BUG-009 Model sends the caller's SIP address as call_ref; every tool call rejected
 When / where: 18 Nov 2026, live test 3, all /mcp tools/call messages.
@@ -138,7 +138,7 @@ Root cause: the model substituted the caller's SIP address for the call id, and 
 Fix (S1.5, spec item 1): resolveCallRef prefers the tools/call _meta conversation id and otherwise accepts any non-empty string up to 200 chars, hashing it into a safe "c:" ref, so a SIP address or "v3:" string can no longer cause a rejection. isCallRef remains for the admin routes only.
 Signal that found it: Conversation History tool-call arguments next to our invalid_input log lines.
 What we would add to catch it faster: log the failing field names on every rejection (done in S1.5 as bad_fields).
-Status: fixed in S1.5, pending live re-test.
+Status: fixed in S1.5. Not seen in later live calls (20 to 23 Nov).
 
 ### BUG-010 Model calls create_job in the Reserve node instead of reserve_technician
 When / where: 18 Nov 2026, live test 3, Reserve node of the workflow.
@@ -149,7 +149,7 @@ Root cause: with tools assistant-level, the model picked the wrong tool for the 
 Fix (S1.5, spec items 2 and 4): create_job no longer takes a job_id from the model and needs an active reservation, so a wrong-node call fails as no_active_reservation; descriptions state the required call order.
 Signal that found it: the live call transcript.
 What we would add to catch it faster: a per-node "expected tool" check in the transcript review.
-Status: fixed in S1.5, pending live re-test.
+Status: fixed in S1.5. Not seen in later live calls (20 to 23 Nov).
 
 ### BUG-011 Rejected tool calls hide the cause in the logs
 When / where: 18 Nov 2026, live test 3 log review after the failures above.
@@ -160,7 +160,7 @@ Root cause: the route logged args.call_ref only when it passed isCallRef (so the
 Fix (S1.5, spec item 5): every failure carries bad_fields (names only), the route logs the resolved safe "c:" call_ref, its source (meta|args|none), and the _meta key names seen.
 Signal that found it: only by reading the transcript next to the logs.
 What we would add to catch it faster: this exact fix — rejections must be self-explanatory in our own logs.
-Status: fixed in S1.5, pending live re-test.
+Status: fixed in S1.5. Not seen in later live calls (20 to 23 Nov).
 
 ### BUG-012 Workflow collapsed into the Triage node
 When / where: 19 Nov 2026, live test 4 (two calls).
@@ -170,7 +170,7 @@ Root cause (hypothesis): MCP tools are assistant-level and the Triage node still
 Fix: per-node tool override in the Portal, node texts rewritten to name only the forbidden tools, assistant-level instructions shortened.
 Signal that found it: flow_node_id per message plus mcp_call logs.
 What we would add to catch it faster: a log or test that checks the node sequence per call.
-Status: mitigation in S1.7 and Portal changes, pending live re-test.
+Status: mitigated in S1.7 and the Portal. The model still often runs the whole call from the Triage node, so the server enforces the order (BUG-020, BUG-028).
 
 ### BUG-013 False technician promise
 When / where: 19 Nov 2026, live test 4 (call 2).
@@ -180,7 +180,7 @@ Root cause: the tool result invited the promise and the Reserve node text said t
 Fix: S1.7 removes those fields and tool descriptions forbid the claim; Reserve node text updated.
 Signal that found it: transcript review.
 What we would add to catch it faster: a golden-set check that fails any reply naming a technician or arrival time.
-Status: mitigation in S1.7 and Portal changes, pending live re-test.
+Status: mitigated in S1.7 and the Portal wording. Not seen in later live calls.
 
 ### BUG-014 Unscripted safety advice
 When / where: 19 Nov 2026, live test 4 (calls 1 and 2).
@@ -189,7 +189,7 @@ Evidence: Conversation History CSVs for the two calls (see BUG-012).
 Root cause: the call never reached the Details node where the scripted lines live (see BUG-012).
 Fix: pending the workflow fix; re-test with a water-near-electrics and a gas call.
 Signal that found it: transcript review.
-Status: mitigation in S1.7 and Portal changes, pending live re-test.
+Status: mitigated by the scripted safety wording (D18). The gas line has been heard live.
 
 ### BUG-015 Stacked filler messages
 When / where: 19 Nov 2026, live test 4 (call 2).
@@ -198,7 +198,7 @@ Evidence: call 2 CSV timestamps against the mcp_call latencies (reserve 1.69 s, 
 Root cause: each MCP call starts its own filler timers, two tool calls ran in one turn, and the fillers queued.
 Fix: one delayed filler at 1500 ms; reserve latency (BUG-005) still to reduce.
 Signal that found it: call CSV timestamps against the mcp_call latency log lines.
-Status: mitigation in S1.7 and Portal changes, pending live re-test.
+Status: mitigated. The related double-filler case is BUG-026, fixed.
 
 ### BUG-016 Assistant talked about a "SIP address" instead of asking for a callback number
 When / where: 19 Nov 2026, Portal web test call after the S1.7 Portal changes (job JAJ3V6; exact test number VERIFY against the CSV).
@@ -279,7 +279,7 @@ Root cause: urgency was trusted from the model. Prompts cannot be the only guard
 Fix (S1.8, spec item 2): severity and trade floors in code — whole-word keywords in the summary (flood, burst, gas, sparking, ...) raise urgency to `emergency`, a "gas" mention corrects the trade to `gas`, and the model's own value is never lowered.
 Signal that found it: reading the transcript.
 What we would add to catch it faster: a golden-set case replaying mangled STT phrases and asserting the stored urgency.
-Status: fixed in S1.8, pending live re-test.
+Status: fixed in S1.8 (server-side urgency and trade floors) and covered by unit tests.
 
 ### BUG-024 Manager alert skipped: a "+61" number became "++61" and failed the allow-list
 When / where: 21 Nov 2026, about 11 pm, live test sim-dec-1 (D20c manager alert).

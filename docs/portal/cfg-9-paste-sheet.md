@@ -1,6 +1,6 @@
-# cfg-9 paste sheet (DRAFT, 22 Nov 2026, not approved, not pasted)
+# cfg-9 paste sheet (22 Nov 2026, live)
 
-Live is cfg-8. cfg-9 adds one thing: a warm transfer to a human when the caller asks for one. No new node and no new edge (the graph stays acyclic and every other node, edge and toggle is unchanged). Rollback is cfg-8.
+cfg-9 adds one thing on top of cfg-8: a warm transfer to a human when the caller asks for one. No new node and no new edge (the graph stays acyclic and every other node, edge and toggle is unchanged). Rollback is cfg-8.
 
 Platform facts (docs, warm-transfer-acceptance page): the transfer tool takes `targets` (name, `to`, optional `message`), `from`, `warm_transfer_instructions` and `warm_transfer_acceptance` (`enabled`, `require_acceptance`, `timeout_secs` 10 to 600, `end_user_target_context_mode` private or shared). The assistant speaks to the target privately, bridges the caller only on acceptance, and on decline or timeout returns to the caller. Do not name any other tool `complete_transfer`. How the human accepts (voice or keypad) and the Portal steps are NOT documented: record what you see in `docs/verify-log.md`.
 

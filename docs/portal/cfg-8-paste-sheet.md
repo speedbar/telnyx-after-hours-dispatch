@@ -1,6 +1,6 @@
-# cfg-8 paste sheet (DRAFT, 21 Nov 2026, not approved, not pasted)
+# cfg-8 paste sheet (21 Nov 2026, live)
 
-Live is cfg-7. cfg-8 changes only three things: emergency-services wording (fire, ambulance, police), the caller-name rule, and the Scope sentence that now points at the emergency-services paragraph. Triage, Reserve, Job, Fallback, Close, Hang Up, the seven edges, the tool toggles, the MCP tools, the voice and the callback-number flow are unchanged from cfg-7. Paste whole blocks (Assistant Instructions, then Details), save as a new version, read back, then promote.
+cfg-8 changes only three things (cfg-7 was the version before it): emergency-services wording (fire, ambulance, police), the caller-name rule, and the Scope sentence that now points at the emergency-services paragraph. Triage, Reserve, Job, Fallback, Close, Hang Up, the seven edges, the tool toggles, the MCP tools, the voice and the callback-number flow are unchanged from cfg-7. Paste whole blocks (Assistant Instructions, then Details), save as a new version, read back, then promote.
 
 ## Why
 
