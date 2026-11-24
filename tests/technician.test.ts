@@ -203,7 +203,7 @@ test("dispatch: clears the hold, arms the alarm, busy_s default and env override
 test("clearDispatch frees the technician early; setShift(false) clears a dispatch", async () => {
   const { actor, alarms } = makeActor();
   await actor.dispatch({ call_ref: "c1", job_id: "j1", busy_s: 1800 });
-  assert.deepEqual(await actor.clearDispatch(), { cleared: true });
+  assert.deepEqual(await actor.clearDispatch(), { cleared: true, was: "dispatched" });
   assert.deepEqual(await actor.clearDispatch(), { cleared: false });
   assert.equal((await actor.status()).status, "available");
   assert.equal(alarms.length, 0, "no timer left pending");
@@ -214,6 +214,28 @@ test("clearDispatch frees the technician early; setShift(false) clears a dispatc
   assert.equal(off.status, "off_shift");
   assert.equal(off.dispatched_for, undefined);
   assert.deepEqual(await actor.reserve({ call_ref: "c3", job_id: "j3" }), { ok: false, reason: "off_shift" });
+});
+
+// T1.6: the admin reset also frees a live hold so the next chat-test repeat
+// can reserve; off_shift is never flipped.
+test("clearDispatch frees a hold too; off_shift is untouched", async () => {
+  const { actor, alarms } = makeActor();
+  await actor.reserve({ call_ref: "c1", job_id: "j1" });
+  assert.equal((await actor.status()).status, "held");
+  assert.deepEqual(await actor.clearDispatch(), { cleared: true, was: "held" });
+  const s = await actor.status();
+  assert.equal(s.status, "available");
+  assert.equal(s.held_for, undefined);
+  assert.equal(alarms.length, 0, "no timer left pending");
+  // A later reserve succeeds.
+  assert.equal((await actor.reserve({ call_ref: "c2", job_id: "j2" })).ok, true);
+
+  // off_shift: nothing to clear and the status stays off_shift.
+  const off = makeActor();
+  await off.actor.reserve({ call_ref: "c1", job_id: "j1" });
+  await off.actor.setShift(false);
+  assert.deepEqual(await off.actor.clearDispatch(), { cleared: false });
+  assert.equal((await off.actor.status()).status, "off_shift");
 });
 
 test("extendHold: same call_ref and job_id only; keeps a long ring from lapsing", async () => {

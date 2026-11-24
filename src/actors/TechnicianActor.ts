@@ -284,16 +284,26 @@ export class TechnicianActor extends StatefulActor {
     return { ok: true, until };
   }
 
-  // D20: admin/demo escape hatch, frees a dispatched technician early.
-  async clearDispatch(): Promise<{ cleared: boolean }> {
+  // D20: admin/demo escape hatch, frees a dispatched technician early. T1.6:
+  // also frees a live hold (per-repeat test reset) and reports what it
+  // cleared. off_shift is never flipped: setShift already drops both
+  // pointers, so there is nothing to clear and the status guard only maps
+  // held/dispatched back to available.
+  async clearDispatch(): Promise<
+    { cleared: true; was: "held" | "dispatched" } | { cleared: false }
+  > {
     const { state } = await this._state();
-    if (!state.dispatched_for) return { cleared: false };
+    if (!state.dispatched_for && !state.held_for) return { cleared: false };
+    const was = state.dispatched_for ? "dispatched" : "held";
     const next: TechState = { ...state, updated_at: Date.now() };
     delete next.dispatched_for;
-    if (next.status === "dispatched") next.status = "available";
+    delete next.held_for;
+    if (next.status === "dispatched" || next.status === "held") {
+      next.status = "available";
+    }
     await this.ctx.storage.put("state", next);
     await this._rearm(next);
-    return { cleared: true };
+    return { cleared: true, was };
   }
 
   async setShift(on: boolean): Promise<TechState> {

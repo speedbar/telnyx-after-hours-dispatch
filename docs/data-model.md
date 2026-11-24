@@ -35,7 +35,7 @@ Methods: `lookup`, `flag`, `bumpCounter`, `seed`. Keys may only use A-Z a-z 0-9 
 | `last_ring_at` | 60 s cooldown between rings |
 | `updated_at` | last change |
 
-Methods: `reserve`, `release`, `status`, `markBooked`, `extendHold`, `dispatch`, `clearDispatch`, `setShift`, `alarm`. A hold that nobody uses lapses by itself.
+Methods: `reserve`, `release`, `status`, `markBooked`, `extendHold`, `dispatch`, `clearDispatch`, `setShift`, `alarm`. A hold that nobody uses lapses by itself. `clearDispatch` is an admin reset: it frees a technician that is held or busy (it never changes `off_shift`).
 
 Mock roster: tech-01 Jordan (plumbing, gas), tech-02 Casey (electrical, hvac), tech-03 Riley (plumbing, other). One technician per trade in the demo, so a second call of the same trade inside the busy window goes to the manager. `clearDispatch` frees a technician.
 

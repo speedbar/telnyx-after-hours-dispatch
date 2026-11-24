@@ -4,10 +4,10 @@
 // --only <scenario id> runs one scenario, --repeat <n> runs each selected
 // scenario n times (a fresh conversation per run; all n must pass).
 // The key comes only from TELNYX_API_KEY and is never printed.
-// T1.5: if ADMIN_TOKEN is set, each caller scenario is preceded by a
-// best-effort clearDispatch reset of tech-01..tech-03 against the deployed
-// function (leftover holds/dispatches otherwise leak into the next booking
-// scenario). The token is read like TELNYX_API_KEY and never printed.
+// T1.5/T1.6: if ADMIN_TOKEN is set, every repeat of a caller scenario is
+// preceded by a best-effort clearDispatch reset of tech-01..tech-03 against
+// the deployed function (leftover holds/dispatches otherwise leak into the
+// next run). The token is read like TELNYX_API_KEY and never printed.
 // Exit codes: 0 all pass, 1 any FAIL/ERROR, 2 usage error or no API key,
 // 3 the first conversation creation of the run failed (STOP rule).
 
@@ -35,20 +35,24 @@ const DEFAULT_FUNCTION_URL = "https://dispatch-b823b5bf-9.telnyxcompute.com";
 const RESET_TECH_IDS = ["tech-01", "tech-02", "tech-03"];
 
 // Best-effort clearDispatch for each RESET_TECH_IDS id; failures are ignored
-// so a reset outage never stops the run. The token is only ever a header.
-async function resetTechnicians(functionUrl: string, token: string): Promise<void> {
+// so a reset outage never stops the run. True when at least one request got
+// an HTTP 2xx. The token is only ever a header.
+async function resetTechnicians(functionUrl: string, token: string): Promise<boolean> {
+  let anyOk = false;
   for (const techId of RESET_TECH_IDS) {
     try {
-      await fetch(`${functionUrl}/admin/tech`, {
+      const res = await fetch(`${functionUrl}/admin/tech`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-admin-token": token },
         body: JSON.stringify({ tech_id: techId, method: "clearDispatch" }),
         signal: AbortSignal.timeout(15_000),
       });
+      if (res.ok) anyOk = true;
     } catch {
       // ignore: a failed reset must not stop the scenario
     }
   }
+  return anyOk;
 }
 
 async function loadScenarios(): Promise<Scenario[]> {
@@ -97,13 +101,6 @@ async function main(): Promise<number> {
   const allTools = new Set<string>();
 
   for (const scenario of selected) {
-    if (resetEnabled && scenario.caller !== undefined) {
-      await resetTechnicians(
-        process.env.DISPATCH_FUNCTION_URL ?? DEFAULT_FUNCTION_URL,
-        adminToken as string,
-      );
-      write("technician reset: clearDispatch sent for tech-01, tech-02, tech-03");
-    }
     const verdicts: RunVerdict[] = [];
     let scenarioSkipped = false;
     for (let k = 1; k <= opts.repeat; k++) {
@@ -112,6 +109,13 @@ async function main(): Promise<number> {
           ? `== ${scenario.id} (${k}/${opts.repeat}) ==`
           : `== ${scenario.id} ==`,
       );
+      if (resetEnabled && scenario.caller !== undefined) {
+        const resetOk = await resetTechnicians(
+          process.env.DISPATCH_FUNCTION_URL ?? DEFAULT_FUNCTION_URL,
+          adminToken as string,
+        );
+        write(resetOk ? "technician reset sent" : "technician reset failed");
+      }
       const r = await runScenario(fetchFn, cfg, scenario, write);
       if (stopRuleArmed) {
         stopRuleArmed = false;
