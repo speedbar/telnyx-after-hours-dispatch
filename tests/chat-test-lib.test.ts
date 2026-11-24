@@ -944,3 +944,63 @@ test("golden_id is present on every scenario in scenarios.json (null allowed)", 
   assert.equal(map.get("H-02-flood"), "C-02");
   assert.equal(map.get("G-01-correction"), "C-05");
 });
+
+test("tool arg any-of list: digits-only phone matches through the list (T1.5)", () => {
+  const s: Scenario = {
+    id: "t",
+    turns: [],
+    assertions: {
+      tool_arg_contains: [
+        {
+          tool: "reserve_technician",
+          field: "callback_number",
+          value: ["0400", "0400123456"],
+        },
+      ],
+    },
+  };
+  const withCalls = (calls: ToolCallRecord[]) => ({
+    replies: [],
+    toolCalls: calls,
+    flowNodeIds: [],
+  });
+  // Digits-only form: "0400" alone cannot match (digit follows it, so no
+  // token boundary); the full-number list entry is the one that matches.
+  assert.equal(tokenMatch("0400123456", "0400"), false);
+  assert.equal(tokenMatch("0400123456", "0400123456"), true);
+  assert.equal(
+    evaluateAssertions(s, withCalls([
+      { name: "reserve_technician", args: { callback_number: "0400123456" } },
+    ])).failures.length,
+    0,
+  );
+  // The spaced form still matches through the "0400" entry.
+  assert.equal(
+    evaluateAssertions(s, withCalls([
+      { name: "reserve_technician", args: { callback_number: "0400 123 456" } },
+    ])).failures.length,
+    0,
+  );
+});
+
+test("evaluateAssertions: tools_not_called fails only when a listed tool was called", () => {
+  const s: Scenario = {
+    id: "t",
+    turns: [],
+    assertions: { tools_not_called: ["reserve_technician", "create_job"] },
+  };
+  const run = (calls: ToolCallRecord[] | null) =>
+    evaluateAssertions(s, { replies: [], toolCalls: calls, flowNodeIds: [] });
+  assert.equal(run([]).failures.length, 0);
+  assert.equal(
+    run([{ name: "release_technician", args: {} }]).failures.length,
+    0,
+  );
+  const bad = run([{ name: "reserve_technician", args: {} }]);
+  assert.equal(bad.failures.length, 1);
+  assert.equal(bad.failures[0].assertion, "tools_not_called");
+  assert.equal(bad.failures[0].detail, "reserve_technician was called");
+  const skipped = run(null);
+  assert.equal(skipped.failures.length, 0);
+  assert.deepEqual(skipped.skipped, ["tools_not_called"]);
+});

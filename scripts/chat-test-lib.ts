@@ -39,6 +39,7 @@ export interface ScenarioAssertions {
   tools_called_exactly?: string[];
   tools_called_include?: string[];
   tools_called_only_from?: string[];
+  tools_not_called?: string[]; // fails if any listed tool was called
   tool_order?: string[];
   no_tool_with_question?: boolean;
   no_goodbye_with_question?: boolean;
@@ -549,6 +550,7 @@ export function evaluateAssertions(
     if (a.tools_called_exactly !== undefined) skipped.push("tools_called_exactly");
     if (a.tools_called_include !== undefined) skipped.push("tools_called_include");
     if (a.tools_called_only_from !== undefined) skipped.push("tools_called_only_from");
+    if (a.tools_not_called !== undefined) skipped.push("tools_not_called");
     if (a.tool_order !== undefined) skipped.push("tool_order");
     if (a.no_tool_with_question === true) skipped.push("no_tool_with_question");
     if (a.no_tool_after_failure === true) skipped.push("no_tool_after_failure");
@@ -585,6 +587,16 @@ export function evaluateAssertions(
           assertion: "tools_called_only_from",
           detail: `unexpected: ${outside.join(",")}`,
         });
+      }
+    }
+    if (a.tools_not_called !== undefined) {
+      for (const name of a.tools_not_called) {
+        if (calls.some((c) => c.name === name)) {
+          failures.push({
+            assertion: "tools_not_called",
+            detail: `${name} was called`,
+          });
+        }
       }
     }
     if (a.tool_order !== undefined) {

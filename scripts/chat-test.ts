@@ -4,6 +4,10 @@
 // --only <scenario id> runs one scenario, --repeat <n> runs each selected
 // scenario n times (a fresh conversation per run; all n must pass).
 // The key comes only from TELNYX_API_KEY and is never printed.
+// T1.5: if ADMIN_TOKEN is set, each caller scenario is preceded by a
+// best-effort clearDispatch reset of tech-01..tech-03 against the deployed
+// function (leftover holds/dispatches otherwise leak into the next booking
+// scenario). The token is read like TELNYX_API_KEY and never printed.
 // Exit codes: 0 all pass, 1 any FAIL/ERROR, 2 usage error or no API key,
 // 3 the first conversation creation of the run failed (STOP rule).
 
@@ -25,6 +29,26 @@ import {
 
 function write(line: string): void {
   process.stdout.write(line + "\n");
+}
+
+const DEFAULT_FUNCTION_URL = "https://dispatch-b823b5bf-9.telnyxcompute.com";
+const RESET_TECH_IDS = ["tech-01", "tech-02", "tech-03"];
+
+// Best-effort clearDispatch for each RESET_TECH_IDS id; failures are ignored
+// so a reset outage never stops the run. The token is only ever a header.
+async function resetTechnicians(functionUrl: string, token: string): Promise<void> {
+  for (const techId of RESET_TECH_IDS) {
+    try {
+      await fetch(`${functionUrl}/admin/tech`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-token": token },
+        body: JSON.stringify({ tech_id: techId, method: "clearDispatch" }),
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      // ignore: a failed reset must not stop the scenario
+    }
+  }
 }
 
 async function loadScenarios(): Promise<Scenario[]> {
@@ -57,6 +81,12 @@ async function main(): Promise<number> {
       ? scenarios
       : scenarios.filter((s) => s.id === opts.only);
 
+  const adminToken = process.env.ADMIN_TOKEN;
+  const resetEnabled = adminToken !== undefined && adminToken !== "";
+  if (!resetEnabled && selected.some((s) => s.caller !== undefined)) {
+    write("ADMIN_TOKEN is not set; technician reset skipped");
+  }
+
   let pass = 0;
   let fail = 0;
   let error = 0;
@@ -67,6 +97,13 @@ async function main(): Promise<number> {
   const allTools = new Set<string>();
 
   for (const scenario of selected) {
+    if (resetEnabled && scenario.caller !== undefined) {
+      await resetTechnicians(
+        process.env.DISPATCH_FUNCTION_URL ?? DEFAULT_FUNCTION_URL,
+        adminToken as string,
+      );
+      write("technician reset: clearDispatch sent for tech-01, tech-02, tech-03");
+    }
     const verdicts: RunVerdict[] = [];
     let scenarioSkipped = false;
     for (let k = 1; k <= opts.repeat; k++) {
